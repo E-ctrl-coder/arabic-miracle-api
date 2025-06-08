@@ -4,6 +4,10 @@ from flask_cors import CORS
 app = Flask(__name__)
 CORS(app)  # Allow cross-origin requests (for Netlify frontend)
 
+@app.route('/', methods=['GET'])
+def index():
+    return "Hello World"
+
 @app.route('/analyze', methods=['POST'])
 def analyze():
     data = request.get_json()
