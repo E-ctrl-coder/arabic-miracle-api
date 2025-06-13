@@ -2,34 +2,55 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 
 app = Flask(__name__)
-CORS(app)  # Allow cross-origin requests (for Netlify frontend)
+CORS(app)
 
-@app.route('/', methods=['GET'])
-def index():
-    return "Hello World"
+# Dummy data for demonstration
+ROOTS_DB = {
+    "أكل": {
+        "root": "أ ك ل",
+        "translation": "to eat",
+        "highlight": {
+            "root": [0, 2],
+            "prefix": [],
+            "suffix": []
+        },
+        "examples": [
+            {"ayah": "فَعَلَ اللَّهُ ذَٰلِكَ", "translation": "Allah did that"}
+        ]
+    },
+    "كتب": {
+        "root": "ك ت ب",
+        "translation": "to write",
+        "highlight": {
+            "root": [0, 2],
+            "prefix": [],
+            "suffix": []
+        },
+        "examples": [
+            {"ayah": "كُتِبَ عَلَيْكُمُ الصِّيَامُ", "translation": "Fasting is prescribed for you"}
+        ]
+    }
+}
 
-@app.route('/analyze', methods=['POST'])
+@app.route("/analyze", methods=["POST"])
 def analyze():
     data = request.get_json()
-    word = data.get('word', '')
+    word = data.get("word", "").strip()
 
-    # MOCK analysis result (replace with real logic later)
-    response = {
-        "word": word,
-        "root": "ف ع ل",
-        "meaning_ar": "عمل",
-        "meaning_en": "to do / act",
-        "quran_count": 45,
-        "examples": [
-            {"ayah": "فَعَلَ اللَّهُ ذَٰلِكَ", "translation": "Allah did that"},
-        ],
-        "highlight": {
-            "root": [0, 3],
-            "prefix": [0, 0],
-            "suffix": [3, 3]
-        }
-    }
-    return jsonify(response)
+    if not word:
+        return jsonify({"error": "No word provided."}), 400
 
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=10000)  # Required for Render
+    analysis = ROOTS_DB.get(word)
+
+    if not analysis:
+        return jsonify({
+            "root": "",
+            "translation": "Not found",
+            "highlight": {},
+            "examples": []
+        })
+
+    return jsonify(analysis)
+
+if __name__ == "__main__":
+    app.run(debug=True)
