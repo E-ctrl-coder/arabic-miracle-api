@@ -1,12 +1,13 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-import openai
+from openai import OpenAI
 import os
 
 app = Flask(__name__)
 CORS(app)
 
-openai.api_key = os.getenv("OPENAI_API_KEY")
+# Initialize the OpenAI client with your API key from environment variable
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 @app.route("/analyze", methods=["POST"])
 def analyze():
@@ -18,17 +19,16 @@ def analyze():
 
     try:
         prompt = f"What is the root of the Arabic word '{word}'? Give the root in Arabic, its meaning in English, and a Qur'anic example if available."
-        response = openai.ChatCompletion.create(
+
+        response = client.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[{"role": "user", "content": prompt}]
         )
         reply = response.choices[0].message.content
         return jsonify({"result": reply})
+
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-app.run(host="0.0.0.0", port=port)
-
-
+    app.run(host="0.0.0.0", port=10000)
