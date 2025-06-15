@@ -1,13 +1,13 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-import openai
 import os
+from openai import OpenAI
 
 app = Flask(__name__)
 CORS(app)
 
-# Set OpenAI API key
-openai.api_key = os.getenv("OPENAI_API_KEY")
+# Initialize OpenAI client with your API key from environment variable
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 @app.route("/analyze", methods=["POST"])
 def analyze():
@@ -54,7 +54,7 @@ def analyze():
 ✅ يجب أن تكون كل الإجابات بالعربية، مع الترجمة الإنجليزية حيث يُطلب فقط. لا تستخدم الترجمة الإنجليزية للبحث عن الجذر في القرآن. نظّم التنسيق بوضوح باستخدام HTML.
 """
 
-        response = openai.ChatCompletion.create(
+        response = client.chat.completions.create(
             model="gpt-4",
             messages=[{"role": "user", "content": prompt}],
             temperature=0.7
