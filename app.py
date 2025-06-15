@@ -1,7 +1,22 @@
-from flask import Flask, request, jsonify
-from flask_cors import CORS
-from openai import OpenAI
-import os
+.root {
+  color: green;
+  font-weight: bold;
+}
+
+.extra {
+  color: orange;
+  font-weight: bold;
+}
+
+.prefix {
+  color: blue;
+  font-weight: bold;
+}
+
+.suffix {
+  color: purple;
+  font-weight: bold;
+}
 
 app = Flask(__name__)
 CORS(app)
