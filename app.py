@@ -19,9 +19,6 @@ if not openai.api_key:
 
 # ----- GPT‑3.5 Analysis Functions -----
 def extract_root_line(response_text):
-    """
-    Finds the line that includes root letters.
-    """
     for line in response_text.splitlines():
         if "root letter" in line.lower() or "Root letters" in line:
             match = re.search(r'[:：]\s*(.+)', line)
@@ -30,9 +27,6 @@ def extract_root_line(response_text):
     return None
 
 def highlight_root_letters(letters):
-    """
-    Wrap each Arabic root letter in a span with the 'highlight' class.
-    """
     clean = letters.replace(" ", "")
     return ''.join(f"<span class='highlight'>{char}</span>" for char in clean)
 
@@ -56,7 +50,7 @@ def analyze():
     if not user_input:
         app.logger.error("Text provided is empty after stripping.")
         return jsonify({"error": "No text provided"}), 400
-    
+
     app.logger.debug("User input: %s", user_input)
     
     prompt = f"""
@@ -79,7 +73,7 @@ def analyze():
         )
         response_text = reply.choices[0].message.content
         app.logger.debug("GPT‑3.5 response: %s", response_text)
-
+    
         # Highlight root letters in the analysis response
         root_text = extract_root_line(response_text)
         if root_text:
@@ -89,20 +83,14 @@ def analyze():
             app.logger.debug("Response after highlighting: %s", response_text)
         else:
             app.logger.warning("No root text found in GPT‑3.5 response.")
-
-        return jsonify({
-            "analysis": response_text.replace("\n", "<br>")
-        })
+    
+        return jsonify({"analysis": response_text.replace("\n", "<br>")})
     except Exception as e:
         app.logger.exception("Exception in /analyze endpoint:")
         return jsonify({"error": str(e)}), 500
 
 # ----- Quran Processing Functions -----
 def highlight_word_quran(word, roots, frequency):
-    """
-    For each letter in the word, if it is in the target roots,
-    wrap it in a span and update its frequency.
-    """
     highlighted = ""
     for char in word:
         if char in roots:
@@ -113,21 +101,14 @@ def highlight_word_quran(word, roots, frequency):
     return highlighted
 
 def process_verse_quran(verse, roots, frequency):
-    """
-    Process a single verse from quraan.txt:
-    Remove any leading numbering and highlight each word.
-    """
     verse = verse.strip()
-    # Remove leading numbering (like "2|83|")
+    # Remove leading numbering (like "2|83|") if present
     verse = re.sub(r"^\d+\|\d+\|\s*", "", verse)
     words = verse.split()
     highlighted_words = [highlight_word_quran(word, roots, frequency) for word in words]
     return " ".join(highlighted_words)
 
 def generate_frequency_table(frequency):
-    """
-    Generate an HTML table showing the frequency of each highlighted letter.
-    """
     table_html = "<table border='1' cellspacing='0' cellpadding='5'>\n"
     table_html += "  <tr><th>Letter</th><th>Frequency</th></tr>\n"
     for letter, count in sorted(frequency.items()):
@@ -136,10 +117,6 @@ def generate_frequency_table(frequency):
     return table_html
 
 def process_quran(input_filename, output_filename, roots):
-    """
-    Process the raw quraan.txt file by highlighting target letters in each verse,
-    compiling frequency data, and generating an HTML page saved as output_filename.
-    """
     frequency = defaultdict(int)
     highlighted_verses = []
     try:
@@ -148,13 +125,13 @@ def process_quran(input_filename, output_filename, roots):
     except Exception as e:
         app.logger.exception("Error reading quraan.txt")
         sys.exit(f"Error reading input file: {e}")
-
+    
     for line in verses:
         if line.strip() == "":
             continue
         hv = process_verse_quran(line, roots, frequency)
         highlighted_verses.append(f"<div class='verse'>{hv}</div>")
-
+    
     html_content = "<!DOCTYPE html>\n<html>\n<head>\n"
     html_content += "  <meta charset='UTF-8'>\n"
     html_content += "  <style>\n"
@@ -171,7 +148,7 @@ def process_quran(input_filename, output_filename, roots):
     for verse in highlighted_verses:
         html_content += verse + "\n"
     html_content += "</body>\n</html>"
-
+    
     try:
         with open(output_filename, "w", encoding="utf8") as outfile:
             outfile.write(html_content)
@@ -180,12 +157,8 @@ def process_quran(input_filename, output_filename, roots):
         app.logger.exception("Error writing output file")
         sys.exit(f"Error writing output file: {e}")
 
-# ----- Endpoint to Serve Processed Quran File -----
 @app.route("/")
 def index():
-    """
-    Serve the generated quraan_highlighted.html file.
-    """
     OUTPUT_FILE = "quraan_highlighted.html"
     if os.path.exists(OUTPUT_FILE):
         app.logger.debug("Serving %s file.", OUTPUT_FILE)
@@ -204,12 +177,12 @@ ROOT_LETTERS = {
 }
 
 if __name__ == "__main__":
-    # Process the Quran text at startup if the output file doesn't exist.
     if not os.path.exists(OUTPUT_FILE):
         app.logger.debug("quraan_highlighted.html not found. Processing quraan.txt...")
         process_quran(INPUT_FILE, OUTPUT_FILE, ROOT_LETTERS)
     else:
         app.logger.debug("quraan_highlighted.html exists. Skipping processing.")
-    # Bind to the port provided by the environment, or default to 
-
-
+    
+    port = int(os.environ.get("PORT", 5000))
+    app.logger.debug("Starting app on port %d", port)
+    app.run(host="0.0.0.0", port=port)
