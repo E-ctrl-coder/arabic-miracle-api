@@ -38,19 +38,25 @@ def analyze():
     raw_data = request.get_data(as_text=True)
     app.logger.debug("Raw request data: %s", raw_data)
     
-    # Force JSON parsing even if content-type is not set, and log the parsed JSON
+    # Try to parse JSON; if parsing fails, data will be None.
     data = request.get_json(force=True, silent=True)
-    app.logger.debug("Parsed JSON data: %s", data)
+    if not data:
+        data = {}
     
-    if not data or not data.get("text"):
+    # Fallback: If the JSON does not contain "text", try form data then query parameters.
+    if not data.get("text", "").strip():
+        if request.form and request.form.get("text", "").strip():
+            data["text"] = request.form.get("text")
+        elif request.args and request.args.get("text", "").strip():
+            data["text"] = request.args.get("text")
+    
+    app.logger.debug("Parsed data: %s", data)
+    
+    if not data.get("text", "").strip():
         app.logger.error("No text provided in the request. Data: %s", data)
         return jsonify({"error": "No text provided"}), 400
-    
-    user_input = data.get("text").strip()
-    if not user_input:
-        app.logger.error("Text provided is empty after stripping.")
-        return jsonify({"error": "No text provided"}), 400
 
+    user_input = data.get("text").strip()
     app.logger.debug("User input: %s", user_input)
     
     prompt = f"""
@@ -168,21 +174,4 @@ def index():
         return abort(404)
 
 # ----- Configuration & Startup -----
-INPUT_FILE = "quraan.txt"
-OUTPUT_FILE = "quraan_highlighted.html"
-ROOT_LETTERS = {
-    "ا", "ب", "ت", "ث", "ج", "ح", "خ", "د", "ذ", "ر", "ز",
-    "س", "ش", "ص", "ض", "ط", "ظ", "ع", "غ", "ف", "ق", "ك",
-    "ل", "م", "ن", "ه", "و", "ي"
-}
-
-if __name__ == "__main__":
-    if not os.path.exists(OUTPUT_FILE):
-        app.logger.debug("quraan_highlighted.html not found. Processing quraan.txt...")
-        process_quran(INPUT_FILE, OUTPUT_FILE, ROOT_LETTERS)
-    else:
-        app.logger.debug("quraan_highlighted.html exists. Skipping processing.")
-    
-    port = int(os.environ.get("PORT", 5000))
-    app.logger.debug("Starting app on port %d", port)
-    app.run(host="0.0.0.0", port=port)
+INPUT_FILE = "quraan.txt
