@@ -10,7 +10,7 @@ from flask_cors import CORS
 app = Flask(__name__)
 CORS(app)  # Enable CORS for all endpoints
 
-# Set up logging to display debug messages on the console
+# Set up logging for debugging
 app.logger.setLevel(logging.DEBUG)
 
 openai.api_key = os.getenv("OPENAI_API_KEY")
@@ -40,11 +40,23 @@ def highlight_root_letters(letters):
 def analyze():
     app.logger.debug("Received /analyze request from %s", request.remote_addr)
     
-    # Extract and debug user input
-    user_input = request.json.get("text", "").strip()
-    if not user_input:
-        app.logger.error("No text provided in the /analyze request.")
+    # Log the raw request data for debugging purposes
+    raw_data = request.get_data(as_text=True)
+    app.logger.debug("Raw request data: %s", raw_data)
+    
+    # Force JSON parsing even if content-type is not set, and log the parsed JSON
+    data = request.get_json(force=True, silent=True)
+    app.logger.debug("Parsed JSON data: %s", data)
+    
+    if not data or not data.get("text"):
+        app.logger.error("No text provided in the request. Data: %s", data)
         return jsonify({"error": "No text provided"}), 400
+    
+    user_input = data.get("text").strip()
+    if not user_input:
+        app.logger.error("Text provided is empty after stripping.")
+        return jsonify({"error": "No text provided"}), 400
+    
     app.logger.debug("User input: %s", user_input)
     
     prompt = f"""
@@ -81,12 +93,9 @@ def analyze():
         return jsonify({
             "analysis": response_text.replace("\n", "<br>")
         })
-
     except Exception as e:
-        app.logger.exception("Error in /analyze endpoint")
-        return jsonify({
-            "error": str(e)
-        }), 500
+        app.logger.exception("Exception in /analyze endpoint:")
+        return jsonify({"error": str(e)}), 500
 
 # ----- Quran Processing Functions -----
 def highlight_word_quran(word, roots, frequency):
@@ -106,10 +115,10 @@ def highlight_word_quran(word, roots, frequency):
 def process_verse_quran(verse, roots, frequency):
     """
     Process a single verse from quraan.txt:
-    Remove leading numbering and highlight each word.
+    Remove any leading numbering and highlight each word.
     """
     verse = verse.strip()
-    # Remove leading numbering (e.g., "2|83|")
+    # Remove leading numbering (like "2|83|")
     verse = re.sub(r"^\d+\|\d+\|\s*", "", verse)
     words = verse.split()
     highlighted_words = [highlight_word_quran(word, roots, frequency) for word in words]
@@ -128,9 +137,8 @@ def generate_frequency_table(frequency):
 
 def process_quran(input_filename, output_filename, roots):
     """
-    Process the raw quraan.txt file:
-    Highlight target letters in each verse, build frequency data,
-    and generate an HTML page saved as output_filename.
+    Process the raw quraan.txt file by highlighting target letters in each verse,
+    compiling frequency data, and generating an HTML page saved as output_filename.
     """
     frequency = defaultdict(int)
     highlighted_verses = []
@@ -196,13 +204,12 @@ ROOT_LETTERS = {
 }
 
 if __name__ == "__main__":
-    # At startup, process the Quran text if the output file doesn't exist.
+    # Process the Quran text at startup if the output file doesn't exist.
     if not os.path.exists(OUTPUT_FILE):
         app.logger.debug("quraan_highlighted.html not found. Processing quraan.txt...")
         process_quran(INPUT_FILE, OUTPUT_FILE, ROOT_LETTERS)
     else:
         app.logger.debug("quraan_highlighted.html exists. Skipping processing.")
-    # Bind to the port provided by the environment or default to 5000.
-    port = int(os.environ.get("PORT", 5000))
-    app.logger.debug("Starting app on port %d", port)
-    app.run(host="0.0.0.0", port=port)
+    # Bind to the port provided by the environment, or default to 
+
+
