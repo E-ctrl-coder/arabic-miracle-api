@@ -34,16 +34,16 @@ def highlight_root_letters(letters):
 def analyze():
     app.logger.debug("Received /analyze request from %s", request.remote_addr)
     
-    # Log the raw request data for debugging purposes
+    # Log the raw request data for debugging
     raw_data = request.get_data(as_text=True)
     app.logger.debug("Raw request data: %s", raw_data)
     
-    # Try to parse JSON; if parsing fails, data will be None.
+    # Try to parse JSON; if that fails, use an empty dictionary.
     data = request.get_json(force=True, silent=True)
     if not data:
         data = {}
     
-    # Fallback: If the JSON does not contain "text", try form data then query parameters.
+    # Fallback: try form data and query parameters if "text" is not available
     if not data.get("text", "").strip():
         if request.form and request.form.get("text", "").strip():
             data["text"] = request.form.get("text")
@@ -80,7 +80,7 @@ def analyze():
         response_text = reply.choices[0].message.content
         app.logger.debug("GPT‑3.5 response: %s", response_text)
     
-        # Highlight root letters in the analysis response
+        # Highlight root letters in the response
         root_text = extract_root_line(response_text)
         if root_text:
             app.logger.debug("Extracted root text: %s", root_text)
@@ -174,4 +174,21 @@ def index():
         return abort(404)
 
 # ----- Configuration & Startup -----
-INPUT_FILE = "quraan.txt
+INPUT_FILE = "quraan.txt"
+OUTPUT_FILE = "quraan_highlighted.html"
+ROOT_LETTERS = {
+    "ا", "ب", "ت", "ث", "ج", "ح", "خ", "د", "ذ", "ر", "ز",
+    "س", "ش", "ص", "ض", "ط", "ظ", "ع", "غ", "ف", "ق", "ك",
+    "ل", "م", "ن", "ه", "و", "ي"
+}
+
+if __name__ == "__main__":
+    if not os.path.exists(OUTPUT_FILE):
+        app.logger.debug("quraan_highlighted.html not found. Processing quraan.txt...")
+        process_quran(INPUT_FILE, OUTPUT_FILE, ROOT_LETTERS)
+    else:
+        app.logger.debug("quraan_highlighted.html exists. Skipping processing.")
+    
+    port = int(os.environ.get("PORT", 5000))
+    app.logger.debug("Starting app on port %d", port)
+    app.run(host="0.0.0.0", port=port)
