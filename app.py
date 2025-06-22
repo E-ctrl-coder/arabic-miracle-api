@@ -13,7 +13,11 @@ app.logger.setLevel(logging.DEBUG)
 
 # Set up your OpenAI API key from the environment
 openai.api_key = os.getenv("OPENAI_API_KEY")
-if not openai.api_key:
+if openai.api_key:
+    # Log a masked version of your API key (first and last 4 characters)
+    masked_key = openai.api_key[:4] + "****" + openai.api_key[-4:]
+    app.logger.debug("OPENAI_API_KEY is set: %s", masked_key)
+else:
     app.logger.error("OPENAI_API_KEY environment variable is not set!")
 
 # --- GET route for quick testing ---
