@@ -3,7 +3,8 @@ import os
 import re
 import logging
 from flask_cors import CORS
-import openai  # Using the new OpenAI interface
+import openai
+from openai import ChatCompletion  # Import ChatCompletion directly
 
 app = Flask(__name__)
 CORS(app)  # Enable CORS for all endpoints
@@ -63,7 +64,7 @@ DO NOT include HTML. Format using plain numbered lines."""
     
     try:
         # Call the ChatCompletion API using the new interface.
-        reply = openai.ChatCompletion.create(
+        reply = ChatCompletion.create(
             model="gpt-3.5-turbo",
             messages=[
                 {
