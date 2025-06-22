@@ -2,10 +2,8 @@ from flask import Flask, request, jsonify, send_file, abort
 import openai
 import os
 import re
-import sys
 import logging
 import asyncio
-from collections import defaultdict
 from flask_cors import CORS
 
 app = Flask(__name__)
@@ -33,24 +31,27 @@ def analyze_post():
     raw_data = request.get_data(as_text=True)
     app.logger.debug("Raw request data: %s", raw_data)
     
-    # Parse JSON (with fallback to form data / query parameters)
-    data = request.get_json(force=True, silent=True) or {}
+    # Attempt to get JSON data; fallback to form or query parameters if necessary.
+    data = request.get_json(silent=True)
+    if not data:
+        data = {}
     if not data.get("text", "").strip():
-        if request.form and request.form.get("text", "").strip():
+        # Fallback: Check form data first, then URL query parameters.
+        if request.form.get("text", "").strip():
             data["text"] = request.form.get("text")
-        elif request.args and request.args.get("text", "").strip():
+        elif request.args.get("text", "").strip():
             data["text"] = request.args.get("text")
     
     app.logger.debug("Parsed data: %s", data)
     
-    if not data.get("text", "").strip():
+    user_input = data.get("text", "").strip()
+    if not user_input:
         app.logger.error("No text provided in the request. Data: %s", data)
         return jsonify({"error": "No text provided"}), 400
-
-    user_input = data.get("text").strip()
+    
     app.logger.debug("User input: %s", user_input)
     
-    # Build the prompt with instructions and required output.
+    # Build the prompt for GPT‑3.5
     prompt = f"""Analyze the Arabic input: "{user_input}"
 
 Return:
@@ -63,7 +64,7 @@ Return:
 DO NOT include HTML. Format using plain numbered lines."""
     
     try:
-        # Define an asynchronous function that calls the new ChatCompletion API.
+        # Asynchronous function to call the ChatCompletion API.
         async def get_chat_response(prompt):
             response = await openai.ChatCompletion.acreate(
                 model="gpt-3.5-turbo",
@@ -71,24 +72,21 @@ DO NOT include HTML. Format using plain numbered lines."""
                     {"role": "system", "content": "You are an expert in Arabic linguistic analysis with detailed knowledge of Quranic texts."},
                     {"role": "user", "content": prompt}
                 ],
-                temperature=0.4
+                temperature=0.4,
             )
             return response
-
-        # Create and use a new event loop.
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        reply = loop.run_until_complete(get_chat_response(prompt))
-        loop.close()
-
-        # Extract the content from the response.
+        
+        # Use asyncio.run to simplify event loop handling.
+        reply = asyncio.run(get_chat_response(prompt))
+        
+        # Extract the content from the GPT‑3.5 response.
         response_text = reply['choices'][0]['message']['content']
         app.logger.debug("Raw GPT‑3.5 response: %s", response_text)
-    
-        # Optionally, extract and highlight the portion that lists root letters.
+        
+        # Optionally, extract and highlight the part that lists root letters.
         root_text = None
         for line in response_text.splitlines():
-            if "root letter" in line.lower() or "Root letters" in line:
+            if "root letter" in line.lower():
                 match = re.search(r'[:：]\s*(.+)', line)
                 if match:
                     root_text = match.group(1).strip()
@@ -100,8 +98,8 @@ DO NOT include HTML. Format using plain numbered lines."""
             app.logger.debug("Response after highlighting: %s", response_text)
         else:
             app.logger.warning("No root text found in GPT‑3.5 response.")
-    
-        # Return the analysis as JSON.
+        
+        # Return the processed analysis as JSON.
         return jsonify({"analysis": response_text.replace("\n", "<br>")})
     except Exception as e:
         app.logger.exception("Exception in /analyze endpoint:")
