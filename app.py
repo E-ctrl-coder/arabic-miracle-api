@@ -4,6 +4,7 @@ import os
 import re
 import sys
 import logging
+import asyncio
 from collections import defaultdict
 from flask_cors import CORS
 
@@ -13,16 +14,17 @@ CORS(app)  # Enable CORS for all endpoints
 # Set up logging for debugging
 app.logger.setLevel(logging.DEBUG)
 
+# Set up the OpenAI API key from environment
 openai.api_key = os.getenv("OPENAI_API_KEY")
 if not openai.api_key:
     app.logger.error("OPENAI_API_KEY environment variable is not set!")
 
-# --- Temporary GET route for testing the /analyze endpoint ---
+# --- Temporary GET route for quick testing ---
 @app.route('/analyze', methods=['GET'])
 def analyze_get():
     return "Analyzer endpoint is up (GET)", 200
 
-# --- POST endpoint for analyzing Arabic words ---
+# --- POST endpoint that calls the new OpenAI Chat Completion ---
 @app.route('/analyze', methods=['POST'])
 def analyze_post():
     app.logger.debug("Received /analyze POST request from %s", request.remote_addr)
@@ -31,10 +33,8 @@ def analyze_post():
     raw_data = request.get_data(as_text=True)
     app.logger.debug("Raw request data: %s", raw_data)
     
-    # Try to parse JSON; if parsing fails, use an empty dict.
+    # Parse JSON (or fallback to form data / query params)
     data = request.get_json(force=True, silent=True) or {}
-    
-    # Fallback: if "text" is missing, try form data then query parameters.
     if not data.get("text", "").strip():
         if request.form and request.form.get("text", "").strip():
             data["text"] = request.form.get("text")
@@ -50,28 +50,37 @@ def analyze_post():
     user_input = data.get("text").strip()
     app.logger.debug("User input: %s", user_input)
     
-    prompt = f"""
-    Analyze the Arabic input: "{user_input}"
+    # Build the prompt with instructions and required output
+    prompt = f"""Analyze the Arabic input: "{user_input}"
 
-    Return:
-    1. Root letters (in Arabic).
-    2. The English meaning of the root.
-    3. The full sentence/contextual English translation.
-    4. Quranic usage: number of times the root appears and 1–2 examples.
-    5. Morphological pattern (وزن صرفي).
+Return:
+1. Root letters (in Arabic).
+2. The English meaning of the root.
+3. The full sentence/contextual English translation.
+4. Quranic usage: number of times the root appears and 1–2 examples.
+5. Morphological pattern (وزن صرفي).
 
-    DO NOT include HTML. Format using plain numbered lines.
-    """
-    try:
-        reply = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.4
-        )
-        response_text = reply.choices[0].message.content
-        app.logger.debug("GPT‑3.5 response: %s", response_text)
+DO NOT include HTML. Format using plain numbered lines."""
     
-        # Look for a line with "root letter" and wrap those letters with a span for highlighting.
+    try:
+        # Define an asynchronous function that calls the new ChatCompletion API
+        async def get_chat_response(prompt):
+            response = await openai.ChatCompletion.acreate(
+                model="gpt-3.5-turbo",
+                messages=[
+                    {"role": "system", "content": "You are an expert in Arabic linguistic analysis with detailed knowledge of Quranic texts."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.4
+            )
+            return response
+
+        # Run the asynchronous function and capture its result
+        reply = asyncio.run(get_chat_response(prompt))
+        response_text = reply['choices'][0]['message']['content']
+        app.logger.debug("Raw GPT‑3.5 response: %s", response_text)
+    
+        # Optionally, extract and highlight the portion that lists root letters.
         root_text = None
         for line in response_text.splitlines():
             if "root letter" in line.lower() or "Root letters" in line:
@@ -87,12 +96,13 @@ def analyze_post():
         else:
             app.logger.warning("No root text found in GPT‑3.5 response.")
     
+        # Return the analysis as JSON
         return jsonify({"analysis": response_text.replace("\n", "<br>")})
     except Exception as e:
         app.logger.exception("Exception in /analyze endpoint:")
         return jsonify({"error": str(e)}), 500
 
-# --- Endpoint to serve the static Quran HTML if needed ---
+# --- Serve static Quran HTML if needed ---
 @app.route("/")
 def index():
     OUTPUT_FILE = "quraan_highlighted.html"
@@ -101,10 +111,7 @@ def index():
     else:
         return abort(404)
 
-# (Other Quran processing functions that you may have are omitted here for clarity.)
-
 if __name__ == "__main__":
-    # You can add other startup processing if needed.
     port = int(os.environ.get("PORT", 5000))
     app.logger.debug("Starting app on port %d", port)
     app.run(host="0.0.0.0", port=port)
