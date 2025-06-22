@@ -3,7 +3,6 @@ import openai
 import os
 import re
 import logging
-import asyncio
 from flask_cors import CORS
 
 app = Flask(__name__)
@@ -22,7 +21,7 @@ if not openai.api_key:
 def analyze_get():
     return "Analyzer endpoint is up (GET)", 200
 
-# --- POST endpoint that calls the new OpenAI Chat Completion asynchronously ---
+# --- POST endpoint that calls the OpenAI ChatCompletion synchronously ---
 @app.route('/analyze', methods=['POST'])
 def analyze_post():
     app.logger.debug("Received /analyze POST request from %s", request.remote_addr)
@@ -32,11 +31,8 @@ def analyze_post():
     app.logger.debug("Raw request data: %s", raw_data)
     
     # Attempt to get JSON data; fallback to form or query parameters if necessary.
-    data = request.get_json(silent=True)
-    if not data:
-        data = {}
+    data = request.get_json(silent=True) or {}
     if not data.get("text", "").strip():
-        # Fallback: Check form data first, then URL query parameters.
         if request.form.get("text", "").strip():
             data["text"] = request.form.get("text")
         elif request.args.get("text", "").strip():
@@ -46,38 +42,36 @@ def analyze_post():
     
     user_input = data.get("text", "").strip()
     if not user_input:
-        app.logger.error("No text provided in the request. Data: %s", data)
+        app.logger.error("No text provided in the request.")
         return jsonify({"error": "No text provided"}), 400
     
     app.logger.debug("User input: %s", user_input)
     
     # Build the prompt for GPT‑3.5
-    prompt = f"""Analyze the Arabic input: "{user_input}"
-
-Return:
-1. Root letters (in Arabic).
-2. The English meaning of the root.
-3. The full sentence/contextual English translation.
-4. Quranic usage: number of times the root appears and 1–2 examples.
-5. Morphological pattern (وزن صرفي).
-
-DO NOT include HTML. Format using plain numbered lines."""
+    prompt = (
+        f'Analyze the Arabic input: "{user_input}"\n\n'
+        "Return:\n"
+        "1. Root letters (in Arabic).\n"
+        "2. The English meaning of the root.\n"
+        "3. The full sentence/contextual English translation.\n"
+        "4. Quranic usage: number of times the root appears and 1–2 examples.\n"
+        "5. Morphological pattern (وزن صرفي).\n\n"
+        "DO NOT include HTML. Format using plain numbered lines."
+    )
     
     try:
-        # Asynchronous function to call the ChatCompletion API.
-        async def get_chat_response(prompt):
-            response = await openai.ChatCompletion.acreate(
-                model="gpt-3.5-turbo",
-                messages=[
-                    {"role": "system", "content": "You are an expert in Arabic linguistic analysis with detailed knowledge of Quranic texts."},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.4,
-            )
-            return response
-        
-        # Use asyncio.run to simplify event loop handling.
-        reply = asyncio.run(get_chat_response(prompt))
+        # Synchronous call to the ChatCompletion API.
+        reply = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are an expert in Arabic linguistic analysis with detailed knowledge of Quranic texts."
+                },
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.4,
+        )
         
         # Extract the content from the GPT‑3.5 response.
         response_text = reply['choices'][0]['message']['content']
@@ -91,9 +85,12 @@ DO NOT include HTML. Format using plain numbered lines."""
                 if match:
                     root_text = match.group(1).strip()
                     break
+        
         if root_text:
             app.logger.debug("Extracted root text: %s", root_text)
-            highlighted = ''.join(f"<span class='highlight'>{char}</span>" for char in root_text.replace(" ", ""))
+            highlighted = ''.join(
+                f"<span class='highlight'>{char}</span>" for char in root_text.replace(" ", "")
+            )
             response_text = response_text.replace(root_text, highlighted)
             app.logger.debug("Response after highlighting: %s", response_text)
         else:
