@@ -8,7 +8,7 @@ from flask_cors import CORS
 app = Flask(__name__)
 CORS(app)  # Enable CORS for all endpoints
 
-# Set up logging for debugging
+# Configure logging for debugging
 app.logger.setLevel(logging.DEBUG)
 
 # Set up the OpenAI API key from environment
@@ -44,7 +44,7 @@ def analyze_post():
     if not user_input:
         app.logger.error("No text provided in the request.")
         return jsonify({"error": "No text provided"}), 400
-    
+        
     app.logger.debug("User input: %s", user_input)
     
     # Build the prompt for GPT‑3.5
@@ -85,7 +85,6 @@ def analyze_post():
                 if match:
                     root_text = match.group(1).strip()
                     break
-        
         if root_text:
             app.logger.debug("Extracted root text: %s", root_text)
             highlighted = ''.join(
@@ -98,8 +97,17 @@ def analyze_post():
         
         # Return the processed analysis as JSON.
         return jsonify({"analysis": response_text.replace("\n", "<br>")})
+    
+    except openai.error.APIConnectionError as conn_e:
+        app.logger.error("Network error connecting to OpenAI API: %s", conn_e)
+        return jsonify({"error": "Network error connecting to OpenAI API"}), 503
+
+    except openai.error.OpenAIError as openai_e:
+        app.logger.error("OpenAI API error: %s", openai_e)
+        return jsonify({"error": "Error from OpenAI API"}), 500
+
     except Exception as e:
-        app.logger.exception("Exception in /analyze endpoint:")
+        app.logger.exception("Unhandled Exception in /analyze endpoint:")
         return jsonify({"error": str(e)}), 500
 
 # --- Serve a static Quran HTML if needed ---
