@@ -3,7 +3,7 @@ import os
 import re
 import logging
 from flask_cors import CORS
-import openai  # Use the new OpenAI interface
+import openai  # Using the new OpenAI interface
 
 app = Flask(__name__)
 CORS(app)  # Enable CORS for all endpoints
@@ -75,7 +75,7 @@ DO NOT include HTML. Format using plain numbered lines."""
         response_text = reply['choices'][0]['message']['content']
         app.logger.debug("Raw GPT‑3.5 response: %s", response_text)
         
-        # Optionally, extract and highlight the portion that lists root letters.
+        # Optionally, extract and highlight the part that lists root letters.
         root_text = None
         for line in response_text.splitlines():
             if "root letter" in line.lower():
@@ -91,7 +91,7 @@ DO NOT include HTML. Format using plain numbered lines."""
         else:
             app.logger.warning("No root text found in GPT‑3.5 response.")
         
-        # Return the analysis as JSON under the "analysis" key.
+        # Return the analysis as JSON with the "analysis" key.
         return jsonify({"analysis": response_text.replace("\n", "<br>")})
     except Exception as e:
         app.logger.exception("Exception in /analyze endpoint:")
