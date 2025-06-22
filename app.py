@@ -24,7 +24,7 @@ if not openai.api_key:
 def analyze_get():
     return "Analyzer endpoint is up (GET)", 200
 
-# --- POST endpoint that calls the new OpenAI Chat Completion ---
+# --- POST endpoint that calls the new OpenAI Chat Completion asynchronously ---
 @app.route('/analyze', methods=['POST'])
 def analyze_post():
     app.logger.debug("Received /analyze POST request from %s", request.remote_addr)
@@ -33,7 +33,7 @@ def analyze_post():
     raw_data = request.get_data(as_text=True)
     app.logger.debug("Raw request data: %s", raw_data)
     
-    # Parse JSON (or fallback to form data / query params)
+    # Parse JSON (with fallback to form data / query parameters)
     data = request.get_json(force=True, silent=True) or {}
     if not data.get("text", "").strip():
         if request.form and request.form.get("text", "").strip():
@@ -50,7 +50,7 @@ def analyze_post():
     user_input = data.get("text").strip()
     app.logger.debug("User input: %s", user_input)
     
-    # Build the prompt with instructions and required output
+    # Build the prompt with instructions and required output.
     prompt = f"""Analyze the Arabic input: "{user_input}"
 
 Return:
@@ -63,7 +63,7 @@ Return:
 DO NOT include HTML. Format using plain numbered lines."""
     
     try:
-        # Define an asynchronous function that calls the new ChatCompletion API
+        # Define an asynchronous function that calls the new ChatCompletion API.
         async def get_chat_response(prompt):
             response = await openai.ChatCompletion.acreate(
                 model="gpt-3.5-turbo",
@@ -75,8 +75,13 @@ DO NOT include HTML. Format using plain numbered lines."""
             )
             return response
 
-        # Run the asynchronous function and capture its result
-        reply = asyncio.run(get_chat_response(prompt))
+        # Create and use a new event loop.
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        reply = loop.run_until_complete(get_chat_response(prompt))
+        loop.close()
+
+        # Extract the content from the response.
         response_text = reply['choices'][0]['message']['content']
         app.logger.debug("Raw GPT‑3.5 response: %s", response_text)
     
@@ -96,13 +101,13 @@ DO NOT include HTML. Format using plain numbered lines."""
         else:
             app.logger.warning("No root text found in GPT‑3.5 response.")
     
-        # Return the analysis as JSON
+        # Return the analysis as JSON.
         return jsonify({"analysis": response_text.replace("\n", "<br>")})
     except Exception as e:
         app.logger.exception("Exception in /analyze endpoint:")
         return jsonify({"error": str(e)}), 500
 
-# --- Serve static Quran HTML if needed ---
+# --- Serve a static Quran HTML if needed ---
 @app.route("/")
 def index():
     OUTPUT_FILE = "quraan_highlighted.html"
