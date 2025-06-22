@@ -17,33 +17,24 @@ openai.api_key = os.getenv("OPENAI_API_KEY")
 if not openai.api_key:
     app.logger.error("OPENAI_API_KEY environment variable is not set!")
 
-# ----- GPT‑3.5 Analysis Functions -----
-def extract_root_line(response_text):
-    for line in response_text.splitlines():
-        if "root letter" in line.lower() or "Root letters" in line:
-            match = re.search(r'[:：]\s*(.+)', line)
-            if match:
-                return match.group(1).strip()
-    return None
+# --- Temporary GET route for testing the /analyze endpoint ---
+@app.route('/analyze', methods=['GET'])
+def analyze_get():
+    return "Analyzer endpoint is up (GET)", 200
 
-def highlight_root_letters(letters):
-    clean = letters.replace(" ", "")
-    return ''.join(f"<span class='highlight'>{char}</span>" for char in clean)
-
+# --- POST endpoint for analyzing Arabic words ---
 @app.route('/analyze', methods=['POST'])
-def analyze():
-    app.logger.debug("Received /analyze request from %s", request.remote_addr)
+def analyze_post():
+    app.logger.debug("Received /analyze POST request from %s", request.remote_addr)
     
     # Log the raw request data for debugging
     raw_data = request.get_data(as_text=True)
     app.logger.debug("Raw request data: %s", raw_data)
     
-    # Try to parse JSON; if that fails, use an empty dictionary.
-    data = request.get_json(force=True, silent=True)
-    if not data:
-        data = {}
+    # Try to parse JSON; if parsing fails, use an empty dict.
+    data = request.get_json(force=True, silent=True) or {}
     
-    # Fallback: try form data and query parameters if "text" is not available
+    # Fallback: if "text" is missing, try form data then query parameters.
     if not data.get("text", "").strip():
         if request.form and request.form.get("text", "").strip():
             data["text"] = request.form.get("text")
@@ -80,11 +71,17 @@ def analyze():
         response_text = reply.choices[0].message.content
         app.logger.debug("GPT‑3.5 response: %s", response_text)
     
-        # Highlight root letters in the response
-        root_text = extract_root_line(response_text)
+        # Look for a line with "root letter" and wrap those letters with a span for highlighting.
+        root_text = None
+        for line in response_text.splitlines():
+            if "root letter" in line.lower() or "Root letters" in line:
+                match = re.search(r'[:：]\s*(.+)', line)
+                if match:
+                    root_text = match.group(1).strip()
+                    break
         if root_text:
             app.logger.debug("Extracted root text: %s", root_text)
-            highlighted = highlight_root_letters(root_text)
+            highlighted = ''.join(f"<span class='highlight'>{char}</span>" for char in root_text.replace(" ", ""))
             response_text = response_text.replace(root_text, highlighted)
             app.logger.debug("Response after highlighting: %s", response_text)
         else:
@@ -95,100 +92,19 @@ def analyze():
         app.logger.exception("Exception in /analyze endpoint:")
         return jsonify({"error": str(e)}), 500
 
-# ----- Quran Processing Functions -----
-def highlight_word_quran(word, roots, frequency):
-    highlighted = ""
-    for char in word:
-        if char in roots:
-            highlighted += f"<span class='highlight'>{char}</span>"
-            frequency[char] += 1
-        else:
-            highlighted += char
-    return highlighted
-
-def process_verse_quran(verse, roots, frequency):
-    verse = verse.strip()
-    # Remove leading numbering (like "2|83|") if present
-    verse = re.sub(r"^\d+\|\d+\|\s*", "", verse)
-    words = verse.split()
-    highlighted_words = [highlight_word_quran(word, roots, frequency) for word in words]
-    return " ".join(highlighted_words)
-
-def generate_frequency_table(frequency):
-    table_html = "<table border='1' cellspacing='0' cellpadding='5'>\n"
-    table_html += "  <tr><th>Letter</th><th>Frequency</th></tr>\n"
-    for letter, count in sorted(frequency.items()):
-        table_html += f"  <tr><td>{letter}</td><td>{count}</td></tr>\n"
-    table_html += "</table>\n"
-    return table_html
-
-def process_quran(input_filename, output_filename, roots):
-    frequency = defaultdict(int)
-    highlighted_verses = []
-    try:
-        with open(input_filename, "r", encoding="utf8") as infile:
-            verses = infile.readlines()
-    except Exception as e:
-        app.logger.exception("Error reading quraan.txt")
-        sys.exit(f"Error reading input file: {e}")
-    
-    for line in verses:
-        if line.strip() == "":
-            continue
-        hv = process_verse_quran(line, roots, frequency)
-        highlighted_verses.append(f"<div class='verse'>{hv}</div>")
-    
-    html_content = "<!DOCTYPE html>\n<html>\n<head>\n"
-    html_content += "  <meta charset='UTF-8'>\n"
-    html_content += "  <style>\n"
-    html_content += "    .highlight { color: red; font-weight: bold; }\n"
-    html_content += "    .verse { margin-bottom: 1em; }\n"
-    html_content += "    table { margin-bottom: 2em; border-collapse: collapse; }\n"
-    html_content += "    th, td { padding: 8px 12px; }\n"
-    html_content += "  </style>\n"
-    html_content += "  <title>Highlighted Quran</title>\n"
-    html_content += "</head>\n<body>\n"
-    html_content += "<h2>Root Letters Frequency</h2>\n"
-    html_content += generate_frequency_table(frequency)
-    html_content += "<h2>Highlighted Quran Verses</h2>\n"
-    for verse in highlighted_verses:
-        html_content += verse + "\n"
-    html_content += "</body>\n</html>"
-    
-    try:
-        with open(output_filename, "w", encoding="utf8") as outfile:
-            outfile.write(html_content)
-        app.logger.debug("Quran processing complete. Output saved in '%s'.", output_filename)
-    except Exception as e:
-        app.logger.exception("Error writing output file")
-        sys.exit(f"Error writing output file: {e}")
-
+# --- Endpoint to serve the static Quran HTML if needed ---
 @app.route("/")
 def index():
     OUTPUT_FILE = "quraan_highlighted.html"
     if os.path.exists(OUTPUT_FILE):
-        app.logger.debug("Serving %s file.", OUTPUT_FILE)
         return send_file(OUTPUT_FILE, mimetype="text/html")
     else:
-        app.logger.error("File %s not found.", OUTPUT_FILE)
         return abort(404)
 
-# ----- Configuration & Startup -----
-INPUT_FILE = "quraan.txt"
-OUTPUT_FILE = "quraan_highlighted.html"
-ROOT_LETTERS = {
-    "ا", "ب", "ت", "ث", "ج", "ح", "خ", "د", "ذ", "ر", "ز",
-    "س", "ش", "ص", "ض", "ط", "ظ", "ع", "غ", "ف", "ق", "ك",
-    "ل", "م", "ن", "ه", "و", "ي"
-}
+# (Other Quran processing functions that you may have are omitted here for clarity.)
 
 if __name__ == "__main__":
-    if not os.path.exists(OUTPUT_FILE):
-        app.logger.debug("quraan_highlighted.html not found. Processing quraan.txt...")
-        process_quran(INPUT_FILE, OUTPUT_FILE, ROOT_LETTERS)
-    else:
-        app.logger.debug("quraan_highlighted.html exists. Skipping processing.")
-    
+    # You can add other startup processing if needed.
     port = int(os.environ.get("PORT", 5000))
     app.logger.debug("Starting app on port %d", port)
     app.run(host="0.0.0.0", port=port)
