@@ -2,12 +2,42 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import os
 from openai import OpenAI
+import re
 
 app = Flask(__name__)
 CORS(app)
 
-# Initialize OpenAI client with your API key from environment variable
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+# Load Quran once at startup
+with open("quraan.txt", "r", encoding="utf-8") as f:
+    quraan_lines = [line.strip() for line in f if line.strip()]
+
+def highlight_root(word, root_letters):
+    highlighted = ""
+    for char in word:
+        if char in root_letters:
+            highlighted += f"<span class='root'>{char}</span>"
+        else:
+            highlighted += char
+    return highlighted
+
+def find_quran_references(root_letters):
+    matches = []
+    count = 0
+    root_set = set(root_letters)
+
+    for verse in quraan_lines:
+        if root_set & set(verse):  # basic filter
+            root_hits = [c for c in verse if c in root_set]
+            if len(root_hits) >= len(root_set):  # basic root match
+                count += 1
+                highlighted = highlight_root(verse, root_set)
+                matches.append(highlighted)
+                if len(matches) >= 3:
+                    break
+
+    return count, matches
 
 @app.route("/analyze", methods=["POST"])
 def analyze():
@@ -23,35 +53,19 @@ def analyze():
 
 حلل الكلمة العربية: "{word}"
 
-يجب أن تُرجع النتيجة بصيغة HTML باستخدام:
-- <span class='root'> للحروف الجذرية
-- <span class='prefix'> للحروف الزائدة كبادئة
-- <span class='suffix'> للحروف الزائدة كلاحقة
-- <span class='extra'> لأي حروف زائدة أخرى
+🔹 أعد فقط:
+1. الجذر العربي للكلمة، مثال: ك-ت-ب
+2. الترجمة الإنجليزية للجذر
+3. الترجمة الإنجليزية للكلمة الكاملة
+4. الوزن الصرفي (الميزان) ونوعه
 
-🔹 يجب أن تتضمن النتيجة:
+✅ استخدم هذا الشكل بدقة:
+جذر الكلمة: ...
+ترجمة الجذر: ...
+معنى الكلمة: ...
+الوزن الصرفي: ... (النوع: ...)
 
-1. **الكلمة مع التلوين**:
-   - حدد الجذر داخل الكلمة باستخدام <span class='root'>
-   - الحروف الزائدة بـ <span class='prefix'> أو <span class='suffix'> أو <span class='extra'>
-
-2. **جذر الكلمة (بالعربية)**:
-   - اكتب الجذر بالحروف المفردة داخل <span class='root'>
-   - ترجم الجذر للإنجليزية (مثلاً: ك-ت-ب → to write)
-
-3. **معنى الكلمة الكاملة بالإنجليزية**
-
-4. **الاستعمال القرآني**:
-   - استخدم **الجذر العربي فقط** (وليس الترجمة) للبحث
-   - عدد مرات ظهور الجذر في القرآن الكريم
-   - أعرض آيتين أو ثلاث تحتوي على الجذر
-   - ظلل الحروف الجذرية في الآية باستخدام <span class='root'>
-
-5. **الوزن الصرفي (الميزان)**:
-   - اذكر الوزن الصرفي للكلمة (مثل: فَعَّال، يَفْتَعِل)
-   - ما نوع هذا الوزن؟ (مثل: صيغة مبالغة، اسم مكان، فعل مجرد...)
-
-✅ يجب أن تكون كل الإجابات بالعربية، مع الترجمة الإنجليزية حيث يُطلب فقط. لا تستخدم الترجمة الإنجليزية للبحث عن الجذر في القرآن. نظّم التنسيق بوضوح باستخدام HTML.
+❌ لا تذكر الآيات أو عدد مرات الظهور، سأقوم بذلك بنفسي.
 """
 
         response = client.chat.completions.create(
@@ -60,8 +74,29 @@ def analyze():
             temperature=0.3
         )
 
-        reply = response.choices[0].message.content
-        return jsonify({"result": reply})
+        reply = response.choices[0].message.content.strip()
+
+        # Extract results using regex
+        root_match = re.search(r"جذر الكلمة:\s*([أ-ي\-]+)", reply)
+        root_arabic = root_match.group(1).replace("-", "") if root_match else ""
+
+        meaning_root = re.search(r"ترجمة الجذر:\s*(.+)", reply)
+        meaning_word = re.search(r"معنى الكلمة:\s*(.+)", reply)
+        scale_info = re.search(r"الوزن الصرفي:\s*(.+?)\(النوع:\s*(.+?)\)", reply)
+
+        # Lookup Quran references from local file
+        count, verses = find_quran_references(root_arabic)
+
+        return jsonify({
+            "word": word,
+            "root": root_arabic,
+            "translation_root": meaning_root.group(1) if meaning_root else "",
+            "translation_word": meaning_word.group(1) if meaning_word else "",
+            "scale": scale_info.group(1).strip() if scale_info else "",
+            "scale_type": scale_info.group(2).strip() if scale_info else "",
+            "quran_count": count,
+            "quran_verses": verses
+        })
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
