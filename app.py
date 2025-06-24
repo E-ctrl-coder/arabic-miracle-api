@@ -2,47 +2,50 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import os
 from openai import OpenAI
+import re
 
 app = Flask(__name__)
 CORS(app)
 
-# Initialize OpenAI client
+# Initialize OpenAI client with API key from Render environment
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-# Load Quran verses once at startup
-with open("quraan.txt", "r", encoding="utf8") as f:
+# Load Qur'an once when the server starts
+with open("quraan.txt", "r", encoding="utf-8") as f:
     quran_lines = f.readlines()
 
-def find_verses_with_root(root_letters, max_results=3):
-    matches = []
-    root_set = set(root_letters)
+
+def highlight_root(word, root):
+    highlighted = ""
+    for char in word:
+        if char in root:
+            highlighted += f"<span class='root'>{char}</span>"
+        else:
+            highlighted += f"<span class='extra'>{char}</span>"
+    return highlighted
+
+
+def find_verses_with_root(root_letters):
+    found_verses = []
     count = 0
+    root_pattern = f"[{''.join(root_letters)}]"
 
     for line in quran_lines:
-        verse = line.strip()
-        if not verse or "|" not in verse:
-            continue
-
-        sura_ayah, text = verse.split("|", maxsplit=1)
-        match = True
-        for letter in root_set:
-            if letter not in text:
-                match = False
-                break
-        if match:
-            # Highlight root letters
-            highlighted = ""
-            for char in text:
-                if char in root_set:
-                    highlighted += f"<span class='root'>{char}</span>"
-                else:
-                    highlighted += char
-            matches.append(f"<strong>{sura_ayah}</strong> {highlighted}")
+        if all(letter in line for letter in root_letters):
             count += 1
-            if len(matches) >= max_results:
-                break
+            # Highlight root letters
+            highlighted_line = ""
+            for char in line:
+                if char in root_letters:
+                    highlighted_line += f"<span class='root'>{char}</span>"
+                else:
+                    highlighted_line += char
+            found_verses.append(highlighted_line.strip())
+        if len(found_verses) >= 3:
+            break
 
-    return count, matches
+    return count, found_verses
+
 
 @app.route("/analyze", methods=["POST"])
 def analyze():
@@ -53,44 +56,44 @@ def analyze():
         return jsonify({"error": "No word provided."}), 400
 
     try:
+        # Step 1: Use OpenAI to analyze the word
         prompt = f"""
-أنت خبير في الصرف واللغة العربية وتحليل الكلمات في القرآن.
+أنت خبير في الصرف العربي واللغويات. حلل الكلمة التالية: "{word}".
 
-حلل الكلمة التالية: "{word}"
+أعطني النتائج بصيغة JSON فقط (لا تشرح، فقط JSON)، ويجب أن تحتوي على:
+- root_ar: الجذر العربي (مثلاً: ك ت ب)
+- root_en: ترجمة الجذر (مثلاً: to write)
+- word_en: معنى الكلمة بالإنجليزية
+- scale: الوزن الصرفي (مثلاً: يَفْعَلُ)
+- scale_type: نوع الوزن (مثلاً: فعل مجرد، صيغة مبالغة، اسم مكان)
+- word_colored: الكلمة بعد تمييز الجذر باللون الأحمر داخل <span class='root'> والباقي في <span class='extra'>
+        """
 
-✅ أرجع النتيجة باستخدام تنسيقات HTML التالية:
-- <span class='root'> للحروف الجذرية (لون أحمر)
-- <span class='prefix'> للحروف الزائدة في البداية (لون أزرق)
-- <span class='suffix'> للحروف الزائدة في النهاية (لون أخضر)
-- <span class='extra'> لأي حروف زائدة أخرى (لون رمادي)
-
-🔹 يجب أن تتضمن النتيجة:
-
-1. الكلمة بعد التحليل والتلوين.
-2. الجذر (بالعربية)، وترجمته للإنجليزية.
-3. ترجمة الكلمة الكاملة للإنجليزية.
-4. الوزن الصرفي (مثل: فَعَّال)، ونوعه (مثل: اسم مبالغة).
-5. فقط أعد الجذر كحروف مفصولة حتى نستخدمها في البحث في القرآن مثل: ك-ت-ب
-
-📌 أعد النتيجة بالعربية مع ترجمة إنجليزية حيث يُطلب.
-"""
         response = client.chat.completions.create(
             model="gpt-4",
             messages=[{"role": "user", "content": prompt}],
             temperature=0.3
         )
 
-        reply = response.choices[0].message.content
+        result_raw = response.choices[0].message.content.strip()
+        import json
+        result = json.loads(result_raw)
 
-        # Extract root for searching Quran
-        import re
-        root_match = re.search(r"(?i)الجذر\s*[:：]?\s*<span class='root'>(.*?)</span>", reply)
-        if not root_match:
-            root_match = re.search(r"\b([أ-ي]-[أ-ي]-[أ-ي])\b", reply)
-        if root_match:
-            raw_root = root_match.group(1)
-            root_letters = [r.strip() for r in re.split(r"[-–]", raw_root) if r.strip()]
-            count, matched_verses = find_verses_with_root(root_letters)
-        else:
-            count = 0
-            mat
+        # Step 2: Extract root letters
+        root_letters = result.get("root_ar", "").replace(" ", "")
+        root_letter_list = list(root_letters)
+
+        # Step 3: Search quraan.txt for root occurrences
+        occurrence_count, matched_verses = find_verses_with_root(root_letter_list)
+
+        result["root_occurrences"] = occurrence_count
+        result["verses"] = matched_verses
+
+        return jsonify(result)
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=10000)
