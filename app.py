@@ -1,3 +1,6 @@
+from flask_cors import CORS
+app = Flask(__name__)
+CORS(app)  # This will allow CORS for all domains by default
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import os
