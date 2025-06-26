@@ -1,86 +1,104 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-import json
-from openai import OpenAI
-import os
-import re
+import openai
+from camel_tools.morphology.database import MorphologyDB
+from camel_tools.morphology.analyzer import Analyzer
 
 app = Flask(__name__)
 CORS(app)
 
+# Load your OpenAI key from env or config
+openai.api_key = 'YOUR_OPENAI_API_KEY'  # Replace with your actual key or use env variable
+
+# Load the CAMeL morphology database once at startup
+db = MorphologyDB.builtin_db()
+analyzer = Analyzer(db)
+
+# Load your preprocessed Quran rooted JSON here:
+import json
 with open('quraan_rooted.json', 'r', encoding='utf-8') as f:
-    quraan_data = json.load(f)
+    quran_data = json.load(f)
 
-client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
-
-def highlight_root_letters(text, root_letters):
-    highlighted = ""
+def highlight_root(word, root_letters):
+    # Highlights root letters in the word in red
+    result = ''
     root_set = set(root_letters)
-    for ch in text:
-        if ch in root_set:
-            highlighted += f"<span class='root'>{ch}</span>"
+    for letter in word:
+        if letter in root_set:
+            result += f"<span class='root'>{letter}</span>"
         else:
-            highlighted += ch
-    return highlighted
+            result += letter
+    return result
 
 @app.route('/analyze', methods=['POST'])
-def analyze_word():
-    data = request.get_json()
-    word = data.get('word', '').strip()
-
+def analyze():
+    data = request.json
+    word = data.get('word')
     if not word:
-        return jsonify({"error": "No word provided"}), 400
+        return jsonify({'error': 'No word provided'}), 400
 
-    # Ask OpenAI for root, scale, and translation
+    # Use CAMeL analyzer to get morphological analyses
+    analyses = analyzer.analyze(word)
+    if not analyses:
+        return jsonify({'error': 'Word not found in morphological database'}), 404
+
+    # Take the first analysis as the best guess
+    analysis = analyses[0]
+
+    # Extract root and pattern (scale)
+    root = analysis.get('root') or ''
+    scale = analysis.get('pattern') or ''
+    pos = analysis.get('pos') or ''
+
+    # Extract root letters as list (remove hyphens etc.)
+    root_letters = [l for l in root if l.isalpha()]
+
+    # Highlight root letters in the word
+    word_colored = highlight_root(word, root_letters)
+
+    # Find occurrences in quran_data based on root
+    occurrences = []
+    root_occurrences_count = 0
+    for verse_info in quran_data:
+        verse_root = verse_info.get('root', '')
+        if root and root == verse_root:
+            root_occurrences_count += 1
+            # Verse text with root letters highlighted red
+            verse_text = verse_info.get('verse_highlighted', '')
+            occurrences.append(f"{verse_info['sura']}|{verse_info['aya']}|{verse_text}")
+
+    # Ask OpenAI for English translation of the word and root
     prompt = (
-        f"Given this Arabic word: {word}\n"
-        "Please provide JSON with the root letters, morphological scale, and English translations "
-        "in this format:\n"
-        '{"root_ar": "root letters", "scale": "scale pattern", "scale_type": "type", '
-        '"word_en": "word translation", "root_en": "root translation"}'
+        f"Translate this Arabic word to English: {word}\n"
+        f"Also translate this Arabic root: {root}\n"
+        f"Provide a short clear translation for each."
     )
+
     try:
-        response = client.chat.completions.create(
+        response = openai.ChatCompletion.create(
             model="gpt-3.5-turbo",
             messages=[{"role": "user", "content": prompt}],
             temperature=0
         )
-        ai_response = response.choices[0].message.content
-        analysis = json.loads(ai_response)
+        translations = response['choices'][0]['message']['content'].split('\n')
+        word_en = translations[0] if len(translations) > 0 else ""
+        root_en = translations[1] if len(translations) > 1 else ""
     except Exception as e:
-        return jsonify({"error": "OpenAI request failed", "details": str(e)}), 500
-
-    root_ar = analysis.get("root_ar", "").replace(" ", "")
-    scale = analysis.get("scale", "")
-    scale_type = analysis.get("scale_type", "")
-    word_en = analysis.get("word_en", "")
-    root_en = analysis.get("root_en", "")
-
-    if not root_ar:
-        return jsonify({"error": "Root not found in OpenAI response"}), 200
-
-    # Search in quraan data for verses with this root
-    verses = []
-    root_occurrences = 0
-    for entry in quraan_data:
-        if entry.get("root", "") == root_ar:
-            root_occurrences += 1
-            verse_text = highlight_root_letters(entry['text'], root_ar)
-            verses.append(f"{entry['surah']}|{entry['ayah']}|{verse_text}")
-
-    # Highlight root letters in the input word
-    word_colored = highlight_root_letters(word, root_ar)
+        word_en = ""
+        root_en = ""
 
     return jsonify({
-        "root_ar": " ".join(root_ar),
-        "root_en": root_en,
-        "root_occurrences": root_occurrences,
-        "scale": scale,
-        "scale_type": scale_type,
-        "verses": verses,
-        "word_colored": word_colored,
-        "word_en": word_en
+        'word': word,
+        'word_colored': word_colored,
+        'root': root,
+        'root_letters': root_letters,
+        'root_en': root_en,
+        'word_en': word_en,
+        'scale': scale,
+        'pos': pos,
+        'root_occurrences': root_occurrences_count,
+        'verses': occurrences
     })
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     app.run(debug=True)
