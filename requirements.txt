@@ -1,7 +1,7 @@
 flask
 flask-cors
 openai>=1.0.0
-camel-tools[analyzer]==1.5.6; python_version < "3.12"
+
 
 
 
