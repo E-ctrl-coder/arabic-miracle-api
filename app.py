@@ -24,14 +24,15 @@ def analyze():
 
     # Ask OpenAI for root, scale, type, and translation
     prompt = (
-        f"Analyze the Arabic word: {word}\n"
-        f"Return the following:\n"
-        f"- Root (in Arabic)\n"
-        f"- Scale/Pattern (الوزن)\n"
-        f"- Type (e.g. noun, verb)\n"
-        f"- English translation of the word\n"
-        f- "English translation of the root"
-    )
+    f"Analyze the Arabic word: {word}\n"
+    f"Return the following:\n"
+    f"- Root (in Arabic)\n"
+    f"- Scale/Pattern (الوزن)\n"
+    f"- Type (e.g. noun, verb)\n"
+    f"- English translation of the word\n"
+    f"- English translation of the root"
+)
+
 
     try:
         response = openai.chat.completions.create(
