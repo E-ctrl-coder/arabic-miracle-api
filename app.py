@@ -1,120 +1,82 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-import json
+import openai
 import os
-from camel_tools.morphology.analyzer import Analyzer
-from openai import OpenAI
+import json
 
-# Initialize Flask
+# Load preprocessed Qur'an data
+with open('quraan_rooted.json', 'r', encoding='utf-8') as f:
+    quran_data = json.load(f)
+
 app = Flask(__name__)
 CORS(app)
 
-# Load CAMeL Analyzer
-analyzer = Analyzer.builtin_analyzer('calima-msa')
+# Set OpenAI API key from environment
+openai.api_key = os.environ.get("OPENAI_API_KEY")
 
-# Load Qur'an root-based data
-with open('quraan_rooted.json', 'r', encoding='utf-8') as f:
-    quraan_data = json.load(f)
-
-# OpenAI setup
-client = OpenAI()
-openai_model = "gpt-4"  # You can change this to "gpt-3.5-turbo" if needed
-
-def get_analysis(word):
-    analyses = analyzer.analyze(word)
-    if not analyses:
-        return None
-
-    # Pick the first valid analysis
-    first = analyses[0]
-    root = first.get('root', '')
-    pattern = first.get('pattern', '')
-    pos = first.get('pos', '')
-    return {
-        'root': root,
-        'pattern': pattern,
-        'pos': pos
-    }
-
-def highlight_root(word, root):
-    highlighted = ""
-    used = [False] * len(word)
-    for r in root:
-        for i, c in enumerate(word):
-            if not used[i] and c == r:
-                highlighted += f"<span style='color:red;font-weight:bold'>{c}</span>"
-                used[i] = True
-                break
-        else:
-            highlighted += f"<span style='color:gray'>{r}</span>"
-    return highlighted
-
-def search_quran_by_root(root):
-    if root in quraan_data:
-        matches = quraan_data[root]
-        count = len(matches)
-        verses = []
-        for entry in matches:
-            surah = entry['surah']
-            ayah = entry['ayah']
-            text = entry['text']
-            for letter in root:
-                text = text.replace(letter, f"<span style='color:red;font-weight:bold'>{letter}</span>")
-            verses.append({
-                "surah": surah,
-                "ayah": ayah,
-                "text": text
-            })
-        return {
-            "count": count,
-            "verses": verses
-        }
-    else:
-        return {
-            "count": 0,
-            "verses": []
-        }
-
-def translate_word(word, root):
-    prompt = f"Translate the Arabic word '{word}' and its root '{root}' into English. Give short, clear meanings."
-    response = client.chat.completions.create(
-        model=openai_model,
-        messages=[{"role": "user", "content": prompt}]
-    )
-    return response.choices[0].message.content.strip()
-
-@app.route('/analyze', methods=['POST'])
-def analyze_word():
-    data = request.get_json()
-    word = data.get('word', '').strip()
+@app.route("/analyze", methods=["POST"])
+def analyze():
+    data = request.json
+    word = data.get("word", "").strip()
 
     if not word:
         return jsonify({"error": "No word provided"}), 400
 
-    analysis = get_analysis(word)
-    if not analysis:
-        return jsonify({"error": "Word analysis failed"}), 404
+    # Ask OpenAI for root, scale, type, and translation
+    prompt = (
+        f"Analyze the Arabic word: {word}\n"
+        f"Return the following:\n"
+        f"- Root (in Arabic)\n"
+        f"- Scale/Pattern (الوزن)\n"
+        f"- Type (e.g. noun, verb)\n"
+        f"- English translation of the word\n"
+        f- "English translation of the root"
+    )
 
-    root = analysis['root']
-    pattern = analysis['pattern']
-    pos = analysis['pos']
+    try:
+        response = openai.chat.completions.create(
+            model="gpt-4",
+            messages=[{"role": "user", "content": prompt}]
+        )
+        reply = response.choices[0].message.content.strip()
 
-    quran_result = search_quran_by_root(root)
-    translation = translate_word(word, root)
-    root_highlighted = highlight_root(word, root)
+        # Extract data from OpenAI reply
+        lines = reply.splitlines()
+        extracted = {
+            "word": word,
+            "root": "",
+            "scale": "",
+            "type": "",
+            "word_translation": "",
+            "root_translation": ""
+        }
 
-    return jsonify({
-        "word": word,
-        "root": root,
-        "pattern": pattern,
-        "pos": pos,
-        "translation": translation,
-        "highlighted_word": root_highlighted,
-        "quran_matches": quran_result
-    })
+        for line in lines:
+            if "Root" in line:
+                extracted["root"] = line.split(":")[-1].strip()
+            elif "Scale" in line or "Pattern" in line or "الوزن" in line:
+                extracted["scale"] = line.split(":")[-1].strip()
+            elif "Type" in line:
+                extracted["type"] = line.split(":")[-1].strip()
+            elif "translation of the word" in line.lower():
+                extracted["word_translation"] = line.split(":")[-1].strip()
+            elif "translation of the root" in line.lower():
+                extracted["root_translation"] = line.split(":")[-1].strip()
 
-# For health check
-@app.route('/')
-def home():
-    return "Arabic Word Analyzer API is running."
+        root = extracted["root"]
 
+        # Find matches in the Qur'an
+        matches = [
+            verse for verse in quran_data if root and root in verse.get("roots", [])
+        ]
+
+        extracted["matches"] = matches
+        extracted["count"] = len(matches)
+
+        return jsonify(extracted)
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+if __name__ == "__main__":
+    app.run(debug=True)
