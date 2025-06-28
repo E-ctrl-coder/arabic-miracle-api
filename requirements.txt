@@ -2,7 +2,7 @@ flask
 flask-cors
 openai>=1.0.0
 gunicorn
-git+https://github.com/arabeyes/alkhalil.git#egg=alkhaleel
+
 
 
 
