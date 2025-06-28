@@ -1,83 +1,108 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-import openai
-import os
 import json
-
-# Load preprocessed Qur'an data
-with open('quraan_rooted.json', 'r', encoding='utf-8') as f:
-    quran_data = json.load(f)
+import re
+import openai
+from alkhaleel import Analyzer
 
 app = Flask(__name__)
 CORS(app)
 
-# Set OpenAI API key from environment
-openai.api_key = os.environ.get("OPENAI_API_KEY")
+# Load Qur'an rooted dataset
+with open('quraan_rooted.json', 'r', encoding='utf-8') as f:
+    quraan_data = json.load(f)
 
-@app.route("/analyze", methods=["POST"])
-def analyze():
-    data = request.json
-    word = data.get("word", "").strip()
+# Load raw Qur’an text
+with open('quraan.txt', 'r', encoding='utf-8') as f:
+    quraan_lines = f.readlines()
+
+# Set your OpenAI key (already stored in Render)
+openai.api_key = os.getenv("OPENAI_API_KEY")
+
+# Initialize Alkhaleel analyzer
+analyzer = Analyzer()
+
+# Arabic normalization function
+def normalize_arabic(text):
+    text = re.sub(r'[ًٌٍَُِّْـ]', '', text)  # Remove diacritics
+    text = re.sub(r'[إأآ]', 'ا', text)       # Normalize alef
+    text = re.sub(r'[ؤئ]', 'ء', text)
+    text = re.sub(r'ة', 'ه', text)
+    return text
+
+# Highlight root letters in red
+def highlight_root(word, root):
+    result = ''
+    root_letters = list(root)
+    for char in word:
+        if char in root_letters:
+            result += f'<span style="color:red;font-weight:bold;">{char}</span>'
+            root_letters.remove(char)
+        else:
+            result += char
+    return result
+
+@app.route('/analyze', methods=['POST'])
+def analyze_word():
+    data = request.get_json()
+    word = data.get('word', '').strip()
 
     if not word:
-        return jsonify({"error": "No word provided"}), 400
+        return jsonify({'error': 'No word provided'}), 400
 
-    # Ask OpenAI for root, scale, type, and translation
-    prompt = (
-    f"Analyze the Arabic word: {word}\n"
-    f"Return the following:\n"
-    f"- Root (in Arabic)\n"
-    f"- Scale/Pattern (الوزن)\n"
-    f"- Type (e.g. noun, verb)\n"
-    f"- English translation of the word\n"
-    f"- English translation of the root"
-)
+    normalized_word = normalize_arabic(word)
 
+    # Use Alkhaleel to analyze the word
+    analysis_results = analyzer.analyze(word)
+    if not analysis_results:
+        return jsonify({'error': 'Could not analyze word'}), 400
+
+    best_result = analysis_results[0]
+    root = best_result.get('root')
+    pattern = best_result.get('pattern')
+    pos = best_result.get('pos')
+
+    # Translate word and root using OpenAI
+    messages = [
+        {"role": "system", "content": "You are a translator of Arabic to English."},
+        {"role": "user", "content": f"What is the English meaning of the Arabic word '{word}' and its root '{root}'?"}
+    ]
 
     try:
-        response = openai.chat.completions.create(
-            model="gpt-4",
-            messages=[{"role": "user", "content": prompt}]
+        completion = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            messages=messages
         )
-        reply = response.choices[0].message.content.strip()
-
-        # Extract data from OpenAI reply
-        lines = reply.splitlines()
-        extracted = {
-            "word": word,
-            "root": "",
-            "scale": "",
-            "type": "",
-            "word_translation": "",
-            "root_translation": ""
-        }
-
-        for line in lines:
-            if "Root" in line:
-                extracted["root"] = line.split(":")[-1].strip()
-            elif "Scale" in line or "Pattern" in line or "الوزن" in line:
-                extracted["scale"] = line.split(":")[-1].strip()
-            elif "Type" in line:
-                extracted["type"] = line.split(":")[-1].strip()
-            elif "translation of the word" in line.lower():
-                extracted["word_translation"] = line.split(":")[-1].strip()
-            elif "translation of the root" in line.lower():
-                extracted["root_translation"] = line.split(":")[-1].strip()
-
-        root = extracted["root"]
-
-        # Find matches in the Qur'an
-        matches = [
-            verse for verse in quran_data if root and root in verse.get("roots", [])
-        ]
-
-        extracted["matches"] = matches
-        extracted["count"] = len(matches)
-
-        return jsonify(extracted)
-
+        translation = completion.choices[0].message.content.strip()
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        translation = "Translation not available."
 
-if __name__ == "__main__":
+    # Look up root in quraan_rooted.json
+    root_occurrences = quraan_data.get(root, [])
+    formatted_occurrences = []
+    for occ in root_occurrences:
+        verse = occ['text']
+        highlighted = highlight_root(verse, root)
+        formatted_occurrences.append({
+            'surah': occ['surah'],
+            'ayah': occ['ayah'],
+            'text': highlighted
+        })
+
+    return jsonify({
+        'word': word,
+        'normalized': normalized_word,
+        'root': root,
+        'pattern': pattern,
+        'pos': pos,
+        'translation': translation,
+        'quran_occurrences': formatted_occurrences,
+        'occurrence_count': len(root_occurrences)
+    })
+
+@app.route('/')
+def home():
+    return "Arabic Miracle backend is running."
+
+if __name__ == '__main__':
     app.run(debug=True)
