@@ -1,6 +1,8 @@
 flask
 flask-cors
 openai>=1.0.0
+alkhaleel
+gunicorn
 
 
 
