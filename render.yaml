@@ -4,10 +4,10 @@ services:
     env: python
     plan: free
     buildCommand: |
-      # 1) Install Java (headless) for the JAR
+      # 1) Install Java (headless) so `java -jar` exists
       apt-get update && \
       apt-get install -y default-jdk-headless && \
-      # 2) Install Python deps
+      # 2) Install your Python deps
       pip install -r requirements.txt
     startCommand: gunicorn app:app
     envVars:
