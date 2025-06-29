@@ -4,8 +4,10 @@ services:
     env: python
     plan: free
     buildCommand: |
+      # 1) Update apt and install Java (headless)
       apt-get update && \
       apt-get install -y default-jdk-headless && \
+      # 2) Install your Python requirements
       pip install -r requirements.txt
     startCommand: gunicorn app:app
     envVars:
