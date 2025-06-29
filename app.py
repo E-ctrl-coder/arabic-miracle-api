@@ -1,6 +1,7 @@
 import os
 import re
 import json
+import glob
 import subprocess
 from flask import Flask, request, jsonify
 from flask_cors import CORS
@@ -9,18 +10,22 @@ import openai
 app = Flask(__name__)
 CORS(app)
 
-# --- Configuration ---
-# Use Java to run the Alkhaleel JAR (make sure alkhalil.jar lives next to this file)
-ALKHALEEL_CMD  = "java"
-ALKHALEEL_ARGS = ["-jar", os.path.join(os.path.dirname(__file__), "alkhalil.jar")]
-
-# Load Quran data once at startup
+# --- Paths & Debug ---
 BASE = os.path.dirname(__file__)
+# Sanity‐check: log all files in backend/ so we can see if alkhalil.jar is present
+app.logger.info("Backend directory contents: %s", glob.glob(os.path.join(BASE, "*")))
+
+# Command to invoke Alkhaleel JAR
+ALKHALEEL_CMD  = "java"
+ALKHALEEL_ARGS = ["-jar", os.path.join(BASE, "alkhalil.jar")]
+
+# --- Load Quran Data ---
 with open(os.path.join(BASE, 'quraan_rooted.json'), 'r', encoding='utf-8') as f:
     quraan_data = json.load(f)
 with open(os.path.join(BASE, 'quraan.txt'), 'r', encoding='utf-8') as f:
     quraan_lines = f.readlines()
 
+# --- OpenAI Config ---
 openai.api_key = os.getenv("OPENAI_API_KEY")
 
 
@@ -34,7 +39,7 @@ def normalize_arabic(text):
 
 def analyze_with_cli(word):
     """
-    Calls the Alkhaleel JAR via Java and parses its output.
+    Calls the Alkhaleel JAR via Java and returns list of analyses.
     """
     cmd = [ALKHALEEL_CMD] + ALKHALEEL_ARGS + [word]
     proc = subprocess.run(cmd, capture_output=True, text=True, check=True)
@@ -72,7 +77,7 @@ def analyze_word():
 
     normalized = normalize_arabic(word)
 
-    # 1) Run Alkhaleel via Java
+    # 1) Run Alkhaleel
     try:
         results = analyze_with_cli(normalized)
     except FileNotFoundError:
@@ -91,21 +96,21 @@ def analyze_word():
     pattern = best['pattern']
     pos     = best['pos']
 
-    # 2) Translate with OpenAI
+    # 2) Translate via OpenAI
     try:
         resp = openai.ChatCompletion.create(
             model="gpt-3.5-turbo",
             messages=[
-                {"role": "system", "content": "You are an expert translator of Arabic to English."},
-                {"role": "user", "content":
-                 f"What is the English meaning of the Arabic word '{word}' and its root '{root}'?"}
+                {"role": "system", "content": "You are an expert translator from Arabic to English."},
+                {"role": "user",
+                 "content": f"What is the English meaning of the Arabic word '{word}' and its root '{root}'?"}
             ]
         )
         translation = resp.choices[0].message.content.strip()
     except Exception as e:
         translation = f"Translation error: {e}"
 
-    # 3) Gather Quran occurrences
+    # 3) Quran occurrences
     occs = quraan_data.get(root, [])
     formatted = [
         {
@@ -128,7 +133,7 @@ def analyze_word():
     })
 
 
-# --- Global JSON Error Handler ---
+# --- Global Error Handler ---
 @app.errorhandler(Exception)
 def handle_all_errors(e):
     app.logger.error("Unhandled Exception", exc_info=e)
