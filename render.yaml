@@ -1,15 +1,10 @@
 services:
-  - type: web
-    name: arabic-miracle-backend
-    env: python
-    plan: free
-    buildCommand: |
-      # 1) Install Java (headless) so `java -jar` exists
-      apt-get update && \
-      apt-get install -y default-jdk-headless && \
-      # 2) Install your Python deps
-      pip install -r requirements.txt
-    startCommand: gunicorn app:app
-    envVars:
-      - key: OPENAI_API_KEY
-        sync: false
+- type: web
+  name: arabic-miracle-backend
+  env: python
+  plan: free
+  buildCommand: apt-get update && apt-get install -y default-jdk-headless && pip install -r requirements.txt
+  startCommand: gunicorn app:app
+  envVars:
+    - key: OPENAI_API_KEY
+      sync: false
