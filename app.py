@@ -10,8 +10,9 @@ app = Flask(__name__)
 CORS(app)
 
 # --- Configuration ---
-# Path to the Alkhaleel CLI executable (make sure this name matches your uploaded binary)
-ALKHALEEL_CMD = os.path.join(os.path.dirname(__file__), "alkhalil")
+# Use Java to run the Alkhaleel JAR (make sure alkhalil.jar lives next to this file)
+ALKHALEEL_CMD  = "java"
+ALKHALEEL_ARGS = ["-jar", os.path.join(os.path.dirname(__file__), "alkhalil.jar")]
 
 # Load Quran data once at startup
 BASE = os.path.dirname(__file__)
@@ -20,7 +21,6 @@ with open(os.path.join(BASE, 'quraan_rooted.json'), 'r', encoding='utf-8') as f:
 with open(os.path.join(BASE, 'quraan.txt'), 'r', encoding='utf-8') as f:
     quraan_lines = f.readlines()
 
-# OpenAI config
 openai.api_key = os.getenv("OPENAI_API_KEY")
 
 
@@ -34,25 +34,20 @@ def normalize_arabic(text):
 
 def analyze_with_cli(word):
     """
-    Calls the Alkhaleel CLI binary and parses its output.
-    Raises FileNotFoundError if the binary is missing,
-           subprocess.CalledProcessError if the CLI returns non-zero.
+    Calls the Alkhaleel JAR via Java and parses its output.
     """
-    proc = subprocess.run(
-        [ALKHALEEL_CMD, word],
-        capture_output=True, text=True, check=True
-    )
-    lines = proc.stdout.strip().splitlines()
+    cmd = [ALKHALEEL_CMD] + ALKHALEEL_ARGS + [word]
+    proc = subprocess.run(cmd, capture_output=True, text=True, check=True)
     analyses = []
-    for line in lines:
+    for line in proc.stdout.strip().splitlines():
         parts = line.split()
         if len(parts) < 3:
             continue
         analyses.append({
-            "root": parts[0],
+            "root":    parts[0],
             "pattern": parts[1],
-            "pos": parts[2],
-            "raw": line
+            "pos":     parts[2],
+            "raw":     line
         })
     return analyses
 
@@ -77,31 +72,33 @@ def analyze_word():
 
     normalized = normalize_arabic(word)
 
-    # 1) Run CLI analysis, catch binary/mis-named errors
+    # 1) Run Alkhaleel via Java
     try:
         results = analyze_with_cli(normalized)
     except FileNotFoundError:
-        return jsonify({'error': f'Alkhaleel CLI not found at {ALKHALEEL_CMD}'}), 500
+        return jsonify({'error': 'Java or alkhalil.jar not found'}), 500
     except subprocess.CalledProcessError as e:
         return jsonify({
-            'error': 'Alkhaleel analysis failed',
+            'error':   'Alkhaleel analysis failed',
             'details': e.stderr.strip() or str(e)
         }), 500
 
     if not results:
         return jsonify({'error': 'Could not parse the word with Alkhaleel'}), 400
 
-    best = results[0]
-    root, pattern, pos = best['root'], best['pattern'], best['pos']
+    best    = results[0]
+    root    = best['root']
+    pattern = best['pattern']
+    pos     = best['pos']
 
     # 2) Translate with OpenAI
     try:
         resp = openai.ChatCompletion.create(
             model="gpt-3.5-turbo",
             messages=[
-                {"role": "system", "content": "You are a translator of Arabic to English."},
-                {"role": "user",
-                 "content": f"What is the English meaning of the Arabic word '{word}' and its root '{root}'?"}
+                {"role": "system", "content": "You are an expert translator of Arabic to English."},
+                {"role": "user", "content":
+                 f"What is the English meaning of the Arabic word '{word}' and its root '{root}'?"}
             ]
         )
         translation = resp.choices[0].message.content.strip()
@@ -113,32 +110,29 @@ def analyze_word():
     formatted = [
         {
             'surah': o['surah'],
-            'ayah': o['ayah'],
-            'text': highlight_root(o['text'], root)
+            'ayah':  o['ayah'],
+            'text':  highlight_root(o['text'], root)
         }
         for o in occs
     ]
 
     return jsonify({
-        'word': word,
-        'normalized': normalized,
-        'root': root,
-        'pattern': pattern,
-        'pos': pos,
-        'translation': translation,
-        'quran_occurrences': formatted,
-        'occurrence_count': len(occs)
+        'word':               word,
+        'normalized':         normalized,
+        'root':               root,
+        'pattern':            pattern,
+        'pos':                pos,
+        'translation':        translation,
+        'quran_occurrences':  formatted,
+        'occurrence_count':   len(occs)
     })
 
 
 # --- Global JSON Error Handler ---
 @app.errorhandler(Exception)
 def handle_all_errors(e):
-    # Logs full traceback into your Render logs
     app.logger.error("Unhandled Exception", exc_info=e)
-    return jsonify({
-        'error': f'{e.__class__.__name__}: {e}'
-    }), 500
+    return jsonify({'error': f'{e.__class__.__name__}: {e}'}), 500
 
 
 @app.route('/')
