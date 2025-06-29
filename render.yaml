@@ -1,13 +1,13 @@
 services:
   - type: web
-    name: arabic-miracle-backend   # how it shows up in Render’s dashboard
-    env: python                    # select the Python runtime
-    plan: free                     # start on the free tier
+    name: arabic-miracle-backend
+    env: python
+    plan: free
     buildCommand: |
       apt-get update && \
-      apt-get install -y default-jdk && \
+      apt-get install -y default-jdk-headless && \
       pip install -r requirements.txt
-    startCommand: gunicorn app:app # serve your Flask “app” object via Gunicorn
+    startCommand: gunicorn app:app
     envVars:
-      - key: OPENAI_API_KEY        # your OpenAI secret
-        sync: false                # keep it masked in their UI
+      - key: OPENAI_API_KEY
+        sync: false
