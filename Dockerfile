@@ -1,23 +1,41 @@
-# Use a slim Python image
-FROM python:3.11-slim
+# --- Stage 1: Build ---
+# Use an official Gradle image with a JDK to build the application.
+FROM gradle:8.5-jdk17 AS build
 
-# Install Java (headless JDK) and unzip for sanity checks
-RUN apt-get update && \
-    apt-get install -y default-jdk-headless unzip && \
-    rm -rf /var/lib/apt/lists/*
+# Set the working directory
+WORKDIR /home/gradle/project
 
-# Set working directory
-WORKDIR /usr/src/app
+# --- 1. Copy only the files needed for dependency resolution ---
+# This creates a cached layer that is only invalidated when your build files change.
+COPY build.gradle.kts gradle.properties ./
+COPY gradle ./gradle
+COPY gradlew ./
 
-# Copy all your app files
-COPY . .
+# Make the Gradle wrapper executable
+RUN chmod +x ./gradlew
 
-# Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
+# --- 2. Download dependencies ---
+# This step will be cached by Docker as long as the files above haven't changed.
+RUN ./gradlew dependencies --no-daemon
 
-# Expose the port Render expects
-ENV PORT 10000
-EXPOSE 10000
+# --- 3. Copy the rest of the source code ---
+# This layer is invalidated more frequently (whenever you change a source file).
+COPY src ./src
 
-# Launch with Gunicorn
-CMD ["gunicorn", "app:app", "-b", "0.0.0.0:10000"]
+# --- 4. Build the application ---
+# This final step uses the cached dependencies and re-compiles only your code.
+RUN ./gradlew bootJar --no-daemon
+
+
+# --- Stage 2: Run ---
+# Use a lightweight JRE image for the final container.
+FROM eclipse-temurin:17-jre-jammy
+
+WORKDIR /app
+
+# Copy only the built JAR from the 'build' stage into the final image
+COPY --from=build /home/gradle/project/build/libs/*.jar app.jar
+
+EXPOSE 8080
+
+ENTRYPOINT ["java", "-jar", "app.jar"]
