@@ -3,11 +3,8 @@ services:
     name: arabic-miracle-backend
     env: python
     plan: free
-    buildCommand: |
-      apt-get update && \
-      apt-get install -y default-jdk-headless && \
-      pip install -r requirements.txt
-    startCommand: gunicorn app:app
+    buildCommand: pip install -r requirements.txt
+    startCommand: flask run --host=0.0.0.0 --port=10000
     envVars:
       - key: OPENAI_API_KEY
         sync: false
