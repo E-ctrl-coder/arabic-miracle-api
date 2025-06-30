@@ -1,7 +1,7 @@
 services:
   - type: web
     name: arabic-miracle-backend
-    env: docker
+    env: python
     plan: free
     buildCommand: |
       apt-get update && \
