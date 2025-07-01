@@ -1,34 +1,31 @@
-from flask import Flask, request, jsonify
-from flask_cors import CORS
+import os
 import json
+from flask import Flask, request, jsonify
 
 app = Flask(__name__)
-CORS(app)
 
-# Load the preprocessed root data
-with open("word_roots.json", "r", encoding="utf-8") as f:
+# Load word_roots.json from the same directory as this script
+here = os.path.dirname(__file__)
+json_path = os.path.join(here, "word_roots.json")
+with open(json_path, encoding="utf-8") as f:
     root_lookup = json.load(f)
-
-@app.route("/")
-def index():
-    return "✅ Arabic Miracle API is running."
 
 @app.route("/analyze", methods=["POST"])
 def analyze():
-    data = request.get_json()
-    word = data.get("word")
+    payload = request.get_json(silent=True, force=True) or {}
+    word = payload.get("word", "").strip()
     if not word:
-        return jsonify({"error": "Missing 'word' in request."}), 400
+        return jsonify({"error": "No word provided"}), 400
 
-    result = root_lookup.get(word)
-    if result:
-        return jsonify({
-            "word": word,
-            "root": result.get("root"),
-            "pattern": result.get("pattern"),
-            "lemma": result.get("lemma"),
-            "prefix": result.get("prefix"),
-            "suffix": result.get("suffix")
-        })
-    else:
-        return jsonify({"error": f"'{word}' not found in dataset."}), 404
+    entry = root_lookup.get(word)
+    if not entry:
+        return jsonify({"error": "Word not found"}), 404
+
+    return jsonify({
+        "word": word,
+        "data": entry
+    })
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
