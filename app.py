@@ -1,88 +1,87 @@
-from flask import Flask, request, jsonify
-from flask_cors import CORS
-import re
 import os
+import re
+from flask import Flask, request, jsonify, make_response
+from flask_cors import CORS
 
-app = Flask(__name__)
-CORS(app)
-
-# 1. Define your prefix/suffix inventories
-PREFIXES = ['سوف', 'وال', 'فال', 'ولل', 'ول', 'كال', 'فل', 'لل', 'وب', 'وب', 'سب', 'ب', 'و', 'ف', 'ل']
-SUFFIXES = ['كما', 'هما', 'كم', 'نا', 'ه', 'ها', 'هم', 'هن', 'ني', 'ني', 'ون', 'ات', 'ة', 'ت', 'ا']
-
-# 2. Load Quran corpus once
+# Load full Quran text from quraan.txt (UTF-8)
 QURAN_TEXT = ''
-with open(os.path.join(os.path.dirname(__file__), 'quraan.txt'), 'r', encoding='utf-8') as f:
+with open(os.path.join(os.path.dirname(__file__), 'quraan.txt'), encoding='utf-8') as f:
     QURAN_TEXT = f.read()
 
-def detect_prefix_suffix(word):
-    """
-    Strips the longest matching prefix and suffix.
-    Returns tuple (prefix, core, suffix).
-    """
-    pre, suf = '', ''
-    core = word
+# Define your known Arabic prefixes and suffixes
+PREFIXES = [
+    "ال", "وال", "بال", "كال", "فال", "لل",
+    "و", "ف", "ب", "ك", "ل"
+]
+SUFFIXES = [
+    "ه", "ها", "ك", "ي", "ت", "نا", "هم",
+    "هن", "كما", "كم", "كن", "ا", "ان", "ين",
+    "وا", "ون", "ات", "ة"
+]
 
-    # detect prefix (longest first)
+def split_arabic(word):
+    """
+    Split an Arabic word into (prefix, root, suffix).
+    Picks the longest matching prefix/suffix.
+    """
+    pre = ""
+    suf = ""
+    root = word
+
+    # detect prefix
     for p in sorted(PREFIXES, key=len, reverse=True):
-        if core.startswith(p):
+        if root.startswith(p):
             pre = p
-            core = core[len(p):]
+            root = root[len(p):]
             break
 
-    # detect suffix (longest first)
+    # detect suffix
     for s in sorted(SUFFIXES, key=len, reverse=True):
-        if core.endswith(s):
+        if root.endswith(s):
             suf = s
-            core = core[:-len(s)]
+            root = root[: -len(s)]
             break
 
-    return pre, core, suf
+    return pre, root, suf
 
-def find_root_pattern(core):
-    """
-    Your existing root+pattern logic.
-    Here’s a placeholder: treat core letters as root.
-    Replace with your Nemlar-based logic.
-    """
-    letters = re.findall(r'.', core)
-    root = ' '.join(letters[:3]) if len(letters) >= 3 else ' '.join(letters)
-    pattern = core  # or however you compute it
-    return root, pattern
+def count_in_quran(root):
+    """Count occurrences of the root in the full Quran text."""
+    # simple substring count; adjust to word-boundary if needed
+    return len(re.findall(root, QURAN_TEXT))
 
-def count_root_occurrence(root):
-    """
-    Count space-normalised root occurrences in the Quran text.
-    """
-    # remove spaces to match corpus form
-    search = root.replace(' ', '')
-    # simple count
-    return QURAN_TEXT.count(search)
+app = Flask(__name__)
 
-@app.route('/analyze', methods=['POST'])
+# Enable CORS for POST + preflight on /analyze
+CORS(app,
+     resources={r"/analyze": {"origins": "*"}},
+     methods=["OPTIONS", "POST"],
+     allow_headers=["Content-Type"]
+)
+
+@app.route('/analyze', methods=['OPTIONS', 'POST'])
 def analyze():
-    data = request.get_json()
+    # 1) Reply to CORS preflight
+    if request.method == 'OPTIONS':
+        resp = make_response()
+        resp.status_code = 204
+        return resp
+
+    # 2) Handle actual POST
+    data = request.get_json(silent=True) or {}
     word = data.get('word', '').strip()
     if not word:
-        return jsonify({'error': 'No word provided'}), 400
+        return jsonify(error="No word provided"), 400
 
-    # 1. split prefix/root/suffix
-    pre, core, suf = detect_prefix_suffix(word)
-
-    # 2. identify root + pattern
-    root, pattern = find_root_pattern(core)
-
-    # 3. count in Quran
-    root_count = count_root_occurrence(root)
+    pre, root, suf = split_arabic(word)
+    occurrences = count_in_quran(root)
 
     return jsonify({
         'prefix': pre,
         'root': root,
-        'pattern': pattern,
         'suffix': suf,
-        'root_count': root_count
+        'occurrences': occurrences
     })
 
 if __name__ == '__main__':
-    # default port 5000
-    app.run(host='0.0.0.0', debug=True)
+    # bind only to localhost (127.0.0.1) so Windows firewall treats it as private
+    app.run(host='127.0.0.1', port=5000, debug=True)
