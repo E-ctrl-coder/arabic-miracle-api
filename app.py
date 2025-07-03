@@ -1,81 +1,88 @@
-import os
-import json
-import re
 from flask import Flask, request, jsonify
 from flask_cors import CORS
+import re
+import os
 
 app = Flask(__name__)
 CORS(app)
 
-# 1) Load the raw JSON lookup
-here = os.path.dirname(os.path.abspath(__file__))
-json_path = os.path.join(here, "word_roots.json")
-print(f"▶️ Loading JSON from {json_path}")
-with open(json_path, encoding="utf-8") as f:
-    raw_lookup = json.load(f)
-print(f"✅ Loaded {len(raw_lookup)} entries")
+# 1. Define your prefix/suffix inventories
+PREFIXES = ['سوف', 'وال', 'فال', 'ولل', 'ول', 'كال', 'فل', 'لل', 'وب', 'وب', 'سب', 'ب', 'و', 'ف', 'ل']
+SUFFIXES = ['كما', 'هما', 'كم', 'نا', 'ه', 'ها', 'هم', 'هن', 'ني', 'ني', 'ون', 'ات', 'ة', 'ت', 'ا']
 
-# 2) Build a normalized (diacritic‐free) lookup
-def normalize(text: str) -> str:
-    # remove Arabic diacritics (tashkeel)
-    text = re.sub(r"[ًٌٍَُِّْ]", "", text)
-    # optionally unify alef forms etc. (uncomment if needed)
-    # text = re.sub(r"[إأآا]", "ا", text)
-    # text = text.replace("ؤ", "و").replace("ئ", "ي")
-    return text
+# 2. Load Quran corpus once
+QURAN_TEXT = ''
+with open(os.path.join(os.path.dirname(__file__), 'quraan.txt'), 'r', encoding='utf-8') as f:
+    QURAN_TEXT = f.read()
 
-norm_lookup = {}
-for key, data in raw_lookup.items():
-    nk = normalize(key)
-    # keep the first entry for each normalized form
-    if nk not in norm_lookup:
-        norm_lookup[nk] = data
-print(f"✅ Built normalized lookup with {len(norm_lookup)} keys")
+def detect_prefix_suffix(word):
+    """
+    Strips the longest matching prefix and suffix.
+    Returns tuple (prefix, core, suffix).
+    """
+    pre, suf = '', ''
+    core = word
 
-# 3) Debug endpoint to inspect raw keys
-@app.route("/debug/keys", methods=["GET"])
-def debug_keys():
-    sample = list(raw_lookup.keys())[:20]
-    return jsonify({"sample_keys": sample})
+    # detect prefix (longest first)
+    for p in sorted(PREFIXES, key=len, reverse=True):
+        if core.startswith(p):
+            pre = p
+            core = core[len(p):]
+            break
 
-# 4) Health check
-@app.route("/", methods=["GET"])
-def index():
+    # detect suffix (longest first)
+    for s in sorted(SUFFIXES, key=len, reverse=True):
+        if core.endswith(s):
+            suf = s
+            core = core[:-len(s)]
+            break
+
+    return pre, core, suf
+
+def find_root_pattern(core):
+    """
+    Your existing root+pattern logic.
+    Here’s a placeholder: treat core letters as root.
+    Replace with your Nemlar-based logic.
+    """
+    letters = re.findall(r'.', core)
+    root = ' '.join(letters[:3]) if len(letters) >= 3 else ' '.join(letters)
+    pattern = core  # or however you compute it
+    return root, pattern
+
+def count_root_occurrence(root):
+    """
+    Count space-normalised root occurrences in the Quran text.
+    """
+    # remove spaces to match corpus form
+    search = root.replace(' ', '')
+    # simple count
+    return QURAN_TEXT.count(search)
+
+@app.route('/analyze', methods=['POST'])
+def analyze():
+    data = request.get_json()
+    word = data.get('word', '').strip()
+    if not word:
+        return jsonify({'error': 'No word provided'}), 400
+
+    # 1. split prefix/root/suffix
+    pre, core, suf = detect_prefix_suffix(word)
+
+    # 2. identify root + pattern
+    root, pattern = find_root_pattern(core)
+
+    # 3. count in Quran
+    root_count = count_root_occurrence(root)
+
     return jsonify({
-        "status": "up",
-        "raw_entries": len(raw_lookup),
-        "normalized_entries": len(norm_lookup),
-        "hint": "GET /analyze?word=… or POST /analyze"
+        'prefix': pre,
+        'root': root,
+        'pattern': pattern,
+        'suffix': suf,
+        'root_count': root_count
     })
 
-# 5) Lookup logic for GET
-@app.route("/analyze", methods=["GET"])
-def analyze_get():
-    word = request.args.get("word", "").strip()
-    if not word:
-        return jsonify({"error": "No word provided"}), 400
-
-    # try raw first, then normalized
-    entry = raw_lookup.get(word) or norm_lookup.get(normalize(word))
-    if not entry:
-        return jsonify({"error": "Not found"}), 404
-
-    return jsonify({"word": word, "data": entry})
-
-# 6) Same for POST
-@app.route("/analyze", methods=["POST"])
-def analyze_post():
-    data = request.get_json(silent=True) or {}
-    word = (data.get("word") or "").strip()
-    if not word:
-        return jsonify({"error": "No word provided"}), 400
-
-    entry = raw_lookup.get(word) or norm_lookup.get(normalize(word))
-    if not entry:
-        return jsonify({"error": "Not found"}), 404
-
-    return jsonify({"word": word, "data": entry})
-
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+if __name__ == '__main__':
+    # default port 5000
+    app.run(host='0.0.0.0', debug=True)
