@@ -6,12 +6,25 @@ from flask_cors import CORS
 app = Flask(__name__)
 CORS(app)
 
+import zipfile
+import xml.etree.ElementTree as ET
+from flask import Flask, jsonify, request
+from flask_cors import CORS
+
+app = Flask(__name__)
+CORS(app)
+
 def load_dataset():
     words_index = {}
-    zip_path = 'data/Nemlar_dataset.zip'
+    zip_path = 'data/Nemlar_dataset.zip'    # ← Make sure this matches your repo exactly!
+    print(f"🔎 Attempting to open ZIP at: {zip_path}")
     try:
         with zipfile.ZipFile(zip_path, 'r') as zf:
-            for name in zf.namelist():
+            names = zf.namelist()
+            print(f"🔍 ZIP contains {len(names)} total entries.")
+            print("📋 Sample entries:", names[:10])
+
+            for name in names:
                 if not name.lower().endswith('.xml'):
                     continue
                 xml_bytes = zf.read(name)
@@ -24,12 +37,15 @@ def load_dataset():
                         'suffix':  w.findtext('suffix', '').strip(),
                         'pattern': w.findtext('pattern', '').strip()
                     }
-        print(f"✅ Loaded {len(words_index)} entries from {zip_path}")
+
+        print(f"✅ Loaded {len(words_index)} word entries from {zip_path}")
+    except FileNotFoundError:
+        print("❌ ERROR: ZIP file not found at that path!")
     except Exception as e:
-        print(f"❌ Failed to load dataset from {zip_path}: {e}")
+        print(f"❌ Failed to load dataset: {e}")
+
     return words_index
 
-# Build the index once at startup
 words_index = load_dataset()
 
 @app.route('/analyze', methods=['POST'])
