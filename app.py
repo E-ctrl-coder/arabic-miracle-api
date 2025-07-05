@@ -9,7 +9,7 @@ CORS(app)
 
 def load_dataset():
     words_index = {}
-    zip_path = 'data/nemlar_dataset.zip'    # ← adjust to your exact filename
+    zip_path = 'data/Nemlar_dataset.zip'    # ← adjust to your exact filename
     print(f"🔎 Attempting to open ZIP at: {zip_path}")
     try:
         with zipfile.ZipFile(zip_path, 'r') as zf:
