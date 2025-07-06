@@ -2,88 +2,86 @@ import os
 import zipfile
 import xml.etree.ElementTree as ET
 import re
-from collections import Counter
+from collections import defaultdict, Counter
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 
 app = Flask(__name__)
 CORS(app)
 
-# Regex to match Arabic diacritics (Tashkeel)
+# regex to strip Arabic diacritics (تشكيل)
 DIACRITICS_PATTERN = re.compile(
     r'[\u0610-\u061A\u064B-\u065F\u06D6-\u06DC\u06DF-\u06E8\u06EA-\u06ED]'
 )
 
 def strip_diacritics(text: str) -> str:
-    """Remove all Arabic diacritics from the input string."""
     return DIACRITICS_PATTERN.sub('', text or '')
 
 def load_dataset(zip_path='data/Nemlar_dataset.zip'):
     words_index = {}
-    app.logger.info(f"Loading Nemlar XML from {zip_path}")
     with zipfile.ZipFile(zip_path, 'r') as zf:
-        for name in zf.namelist():
-            if not name.lower().endswith('.xml'):
+        for fname in zf.namelist():
+            if not fname.lower().endswith('.xml'):
                 continue
             try:
-                root_ele = ET.fromstring(zf.read(name))
+                root = ET.fromstring(zf.read(fname))
             except ET.ParseError:
-                app.logger.warning(f"Skipping malformed XML: {name}")
                 continue
-
-            for al in root_ele.findall('.//ArabicLexical'):
+            for al in root.findall('.//ArabicLexical'):
                 raw_word   = al.attrib.get('word','').strip()
+                raw_pref   = al.attrib.get('prefix','').strip()
                 raw_root   = al.attrib.get('root','').strip()
+                raw_suff   = al.attrib.get('suffix','').strip()
+                raw_pat    = al.attrib.get('pattern','').strip()
                 if not raw_word or not raw_root:
                     continue
 
-                # strip diacritics from word and root
-                word = strip_diacritics(raw_word)
-                root = strip_diacritics(raw_root)
+                # strip diacritics
+                word   = strip_diacritics(raw_word)
+                pref   = strip_diacritics(raw_pref)
+                root_s = strip_diacritics(raw_root)
+                suff   = strip_diacritics(raw_suff)
+                pat    = strip_diacritics(raw_pat)
 
                 if word not in words_index:
-                    words_index[word] = {
-                        'prefix':    strip_diacritics(al.attrib.get('prefix','').strip()),
-                        'root':      root,
-                        'suffix':    strip_diacritics(al.attrib.get('suffix','').strip()),
-                        'pattern':   strip_diacritics(al.attrib.get('pattern','').strip()),
-                        'word_occurrences':  0,
-                        'quran_occurrences': 0
-                    }
-                words_index[word]['word_occurrences'] += 1
+                    # prepare letter-level segments
+                    segments = []
+                    if pref:   segments.append({'text': pref,   'type':'prefix'})
+                    if root_s: segments.append({'text': root_s, 'type':'root'})
+                    if suff:   segments.append({'text': suff,   'type':'suffix'})
 
-    app.logger.info(f"Parsed {len(words_index)} unique words (diacritics stripped)")
+                    words_index[word] = {
+                        'segments': segments,
+                        'pattern':  pat,
+                        'root':     root_s
+                    }
     return words_index
 
-def load_quran_tokens(quran_path='data/quraan.txt'):
-    app.logger.info(f"Loading Quran text from {quran_path}")
-    text = open(quran_path, 'r', encoding='utf-8').read()
-    text = strip_diacritics(text)   # remove tashkeel from Quran
-    # tokenize on Arabic letters only
-    tokens = re.findall(r'[\u0600-\u06FF]+', text)
-    app.logger.info(f"Tokenized Quran into {len(tokens)} words (diacr. stripped)")
-    return tokens
+def load_quran_verses(quran_path='data/quraan.txt'):
+    verses = []
+    with open(quran_path, 'r', encoding='utf-8') as f:
+        for i, line in enumerate(f, start=1):
+            text = strip_diacritics(line.strip())
+            if text:
+                verses.append({'verseNumber': i, 'text': text})
+    return verses
 
-# Load data at startup
-words_index = load_dataset()
-quran_tokens = load_quran_tokens()
+# Startup: load data
+words_index   = load_dataset()
+verses       = load_quran_verses()
 
-# Precompute root occurrence counts
-root_counter = Counter()
-# initialize keys
-for entry in words_index.values():
-    root = entry['root']
-    if root:
-        root_counter[root] = 0
+# Precompute root → [example verses] and root counts
+root_set     = {e['root'] for e in words_index.values()}
+root_examples= defaultdict(list)
+root_counts  = Counter()
 
-# count occurrences in Quran tokens
-for token in quran_tokens:
-    if token in root_counter:
-        root_counter[token] += 1
-
-# assign back to words_index
-for entry in words_index.values():
-    entry['quran_occurrences'] = root_counter.get(entry['root'], 0)
+for v in verses:
+    tokens = set(re.findall(r'[\u0600-\u06FF]+', v['text']))
+    hits   = tokens & root_set
+    for r in hits:
+        root_counts[r] += 1
+        if len(root_examples[r]) < 3:
+            root_examples[r].append(v)
 
 @app.route('/', methods=['GET'])
 def home():
@@ -95,43 +93,25 @@ def ping():
 
 @app.route('/analyze', methods=['POST'])
 def analyze():
-    try:
-        payload = request.get_json(force=True)
-        raw = payload.get('word','').strip()
-    except Exception:
+    data = request.get_json(silent=True)
+    if not data or 'word' not in data:
         return jsonify(error="Invalid JSON payload"), 400
 
-    # strip diacritics from incoming word
-    word = strip_diacritics(raw)
-    if not word:
-        return jsonify(error="No word provided"), 400
-
-    entry = words_index.get(word)
+    w       = strip_diacritics(data['word'].strip())
+    entry   = words_index.get(w)
     if not entry:
         return jsonify(error="Word not found"), 404
 
+    r       = entry['root']
+    count   = root_counts.get(r, 0)
+    examples= root_examples.get(r, [])
+
     return jsonify({
-        'prefix':            entry['prefix'],
-        'root':              entry['root'],
-        'suffix':            entry['suffix'],
-        'pattern':           entry['pattern'],
-        'word_occurrences':  entry['word_occurrences'],
-        'quran_occurrences': entry['quran_occurrences']
+        'segments':         entry['segments'],
+        'pattern':          entry['pattern'],
+        'root_occurrences': count,
+        'example_verses':   examples
     }), 200
-
-# Ensure all errors return JSON
-@app.errorhandler(404)
-def not_found(e):
-    return jsonify(error="Not found"), 404
-
-@app.errorhandler(405)
-def method_not_allowed(e):
-    return jsonify(error="Method not allowed"), 405
-
-@app.errorhandler(Exception)
-def internal_error(e):
-    app.logger.exception(e)
-    return jsonify(error="Internal server error"), 500
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 10000))
