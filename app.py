@@ -14,8 +14,24 @@ DIACRITICS_PATTERN = re.compile(
     r'[\u0610-\u061A\u064B-\u065F\u06D6-\u06DC\u06DF-\u06E8\u06EA-\u06ED]'
 )
 
-def strip_diacritics(text: str) -> str:
-    return DIACRITICS_PATTERN.sub('', text or '')
+# mapping for letter-level normalization
+NORMALIZE_MAP = str.maketrans({
+    'آ': 'ا',
+    'أ': 'ا',
+    'إ': 'ا',
+    'ة': 'ه',
+    'ى': 'ي',
+    'ـ': ''
+})
+
+def normalize_arabic(text: str) -> str:
+    """Strip tashkeel, normalize alef variants, tā’ marbūṭa, tatwīl, alif maqṣūra."""
+    if not text:
+        return ''
+    # remove tatwīl/alef variants/tā’ marbūṭa/alif maqṣūra
+    text = text.translate(NORMALIZE_MAP)
+    # remove diacritics
+    return DIACRITICS_PATTERN.sub('', text)
 
 def load_dataset(zip_path='data/Nemlar_dataset.zip'):
     words_index = {}
@@ -24,18 +40,18 @@ def load_dataset(zip_path='data/Nemlar_dataset.zip'):
             if not fname.lower().endswith('.xml'):
                 continue
             try:
-                root = ET.fromstring(zf.read(fname))
+                root_elem = ET.fromstring(zf.read(fname))
             except ET.ParseError:
                 continue
-            for al in root.findall('.//ArabicLexical'):
-                raw_word = strip_diacritics(al.attrib.get('word','').strip())
-                raw_pref = strip_diacritics(al.attrib.get('prefix','').strip())
-                raw_root = strip_diacritics(al.attrib.get('root','').strip())
-                raw_suff = strip_diacritics(al.attrib.get('suffix','').strip())
-                raw_pat  = strip_diacritics(al.attrib.get('pattern','').strip())
+            for al in root_elem.findall('.//ArabicLexical'):
+                raw_word = normalize_arabic(al.attrib.get('word','').strip())
+                raw_pref = normalize_arabic(al.attrib.get('prefix','').strip())
+                raw_root = normalize_arabic(al.attrib.get('root','').strip())
+                raw_suff = normalize_arabic(al.attrib.get('suffix','').strip())
+                raw_pat  = normalize_arabic(al.attrib.get('pattern','').strip())
                 if not raw_word or not raw_root:
                     continue
-                # only first occurrence per word
+
                 if raw_word not in words_index:
                     segments = []
                     if raw_pref:   segments.append({'text': raw_pref,   'type':'prefix'})
@@ -52,17 +68,17 @@ def load_quran_verses(quran_path='data/quraan.txt'):
     verses = []
     with open(quran_path, 'r', encoding='utf-8') as f:
         for i, line in enumerate(f, start=1):
-            text = strip_diacritics(line.strip())
+            text = normalize_arabic(line.strip())
             if text:
                 verses.append({'verseNumber': i, 'text': text})
     return verses
 
-# Startup
-words_index    = load_dataset()
-verses         = load_quran_verses()
-root_set       = {e['root'] for e in words_index.values()}
-root_examples  = defaultdict(list)
-root_counts    = Counter()
+# Startup: build indexes
+words_index   = load_dataset()
+verses        = load_quran_verses()
+root_set      = {e['root'] for e in words_index.values()}
+root_examples = defaultdict(list)
+root_counts   = Counter()
 
 for v in verses:
     tokens = set(re.findall(r'[\u0600-\u06FF]+', v['text']))
@@ -84,21 +100,20 @@ def ping():
 def analyze():
     data = request.get_json(silent=True) or {}
     raw  = data.get('word','').strip()
-    w    = strip_diacritics(raw)
+    w    = normalize_arabic(raw)
     if not w:
         return jsonify(error="Invalid JSON payload"), 400
 
-    # try exact lookup first
+    # exact lookup
     entry = words_index.get(w)
 
     # fallback: strip initial hamza/alif variants
     if not entry:
-        for hamza in ('أ','إ','ا','آ'):
+        for hamza in ('ا','أ','إ','آ'):
             if w.startswith(hamza):
                 stripped = w[len(hamza):]
                 cand = words_index.get(stripped)
                 if cand:
-                    # prepend that hamza as a prefix segment
                     entry = {
                         'segments': [{'text': hamza, 'type':'prefix'}] + cand['segments'],
                         'pattern':  cand['pattern'],
@@ -109,9 +124,9 @@ def analyze():
     if not entry:
         return jsonify(error="Word not found"), 404
 
-    r        = entry['root']
-    count    = root_counts.get(r, 0)
-    examples = root_examples.get(r, [])
+    root_val = entry['root']
+    count    = root_counts.get(root_val, 0)
+    examples = root_examples.get(root_val, [])
 
     return jsonify({
         'segments':         entry['segments'],
