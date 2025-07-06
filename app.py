@@ -3,13 +3,13 @@ import zipfile
 import xml.etree.ElementTree as ET
 import re
 from collections import defaultdict, Counter
-from difflib import get_close_matches
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 
 app = Flask(__name__)
 CORS(app)
 
+# regex to strip Arabic diacritics (تشكيل)
 DIACRITICS_PATTERN = re.compile(
     r'[\u0610-\u061A\u064B-\u065F\u06D6-\u06DC\u06DF-\u06E8\u06EA-\u06ED]'
 )
@@ -35,6 +35,7 @@ def load_dataset(zip_path='data/Nemlar_dataset.zip'):
                 raw_pat  = strip_diacritics(al.attrib.get('pattern','').strip())
                 if not raw_word or not raw_root:
                     continue
+                # only first occurrence per word
                 if raw_word not in words_index:
                     segments = []
                     if raw_pref:   segments.append({'text': raw_pref,   'type':'prefix'})
@@ -82,19 +83,31 @@ def ping():
 @app.route('/analyze', methods=['POST'])
 def analyze():
     data = request.get_json(silent=True) or {}
-    raw = data.get('word','').strip()
-    word = strip_diacritics(raw)
-    if not word:
+    raw  = data.get('word','').strip()
+    w    = strip_diacritics(raw)
+    if not w:
         return jsonify(error="Invalid JSON payload"), 400
 
-    entry = words_index.get(word)
+    # try exact lookup first
+    entry = words_index.get(w)
+
+    # fallback: strip initial hamza/alif variants
     if not entry:
-        # suggestions via difflib
-        suggestions = get_close_matches(word, words_index.keys(), n=3, cutoff=0.6)
-        return jsonify(
-            error="Word not found",
-            suggestions=suggestions
-        ), 404
+        for hamza in ('أ','إ','ا','آ'):
+            if w.startswith(hamza):
+                stripped = w[len(hamza):]
+                cand = words_index.get(stripped)
+                if cand:
+                    # prepend that hamza as a prefix segment
+                    entry = {
+                        'segments': [{'text': hamza, 'type':'prefix'}] + cand['segments'],
+                        'pattern':  cand['pattern'],
+                        'root':     cand['root']
+                    }
+                    break
+
+    if not entry:
+        return jsonify(error="Word not found"), 404
 
     r        = entry['root']
     count    = root_counts.get(r, 0)
