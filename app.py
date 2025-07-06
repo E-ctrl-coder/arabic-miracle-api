@@ -9,92 +9,63 @@ from flask_cors import CORS
 app = Flask(__name__)
 CORS(app)
 
-# regex to strip Arabic diacritics (تشكيل)
 DIACRITICS_PATTERN = re.compile(
     r'[\u0610-\u061A\u064B-\u065F\u06D6-\u06DC\u06DF-\u06E8\u06EA-\u06ED]'
 )
 
-# mapping for letter-level normalization
-NORMALIZE_MAP = str.maketrans({
-    'آ': 'ا',
-    'أ': 'ا',
-    'إ': 'ا',
-    'ة': 'ه',
-    'ى': 'ي',
-    'ـ': ''
-})
-
 def normalize_arabic(text: str) -> str:
-    """Strip tashkeel, normalize alef variants, tā’ marbūṭa, tatwīl, alif maqṣūra."""
-    if not text:
-        return ''
-    # remove tatwīl/alef variants/tā’ marbūṭa/alif maqṣūra
-    text = text.translate(NORMALIZE_MAP)
-    # remove diacritics
+    # strip tashkeel, normalize hamza variants, tā’ marbūṭa, etc.
+    if not text: return ''
+    normal_map = str.maketrans({'آ':'ا','أ':'ا','إ':'ا','ة':'ه','ى':'ي','ـ':''})
+    text = text.translate(normal_map)
     return DIACRITICS_PATTERN.sub('', text)
 
 def load_dataset(zip_path='data/Nemlar_dataset.zip'):
-    words_index = {}
-    with zipfile.ZipFile(zip_path, 'r') as zf:
-        for fname in zf.namelist():
-            if not fname.lower().endswith('.xml'):
-                continue
+    idx = {}
+    with zipfile.ZipFile(zip_path) as zf:
+        for fn in zf.namelist():
+            if not fn.lower().endswith('.xml'): continue
             try:
-                root_elem = ET.fromstring(zf.read(fname))
+                root = ET.fromstring(zf.read(fn))
             except ET.ParseError:
                 continue
-            for al in root_elem.findall('.//ArabicLexical'):
-                raw_word = normalize_arabic(al.attrib.get('word','').strip())
-                raw_pref = normalize_arabic(al.attrib.get('prefix','').strip())
-                raw_root = normalize_arabic(al.attrib.get('root','').strip())
-                raw_suff = normalize_arabic(al.attrib.get('suffix','').strip())
-                raw_pat  = normalize_arabic(al.attrib.get('pattern','').strip())
-                if not raw_word or not raw_root:
-                    continue
+            for al in root.findall('.//ArabicLexical'):
+                w  = normalize_arabic(al.attrib.get('word','').strip())
+                p  = normalize_arabic(al.attrib.get('prefix','').strip())
+                r  = normalize_arabic(al.attrib.get('root','').strip())
+                s  = normalize_arabic(al.attrib.get('suffix','').strip())
+                pat= normalize_arabic(al.attrib.get('pattern','').strip())
+                if not w or not r: continue
+                if w not in idx:
+                    segs = []
+                    if p: segs.append({'text':p,'type':'prefix'})
+                    if r: segs.append({'text':r,'type':'root'})
+                    if s: segs.append({'text':s,'type':'suffix'})
+                    idx[w] = {'segments':segs,'pattern':pat,'root':r}
+    return idx
 
-                if raw_word not in words_index:
-                    segments = []
-                    if raw_pref:   segments.append({'text': raw_pref,   'type':'prefix'})
-                    if raw_root:   segments.append({'text': raw_root,   'type':'root'})
-                    if raw_suff:   segments.append({'text': raw_suff,   'type':'suffix'})
-                    words_index[raw_word] = {
-                        'segments': segments,
-                        'pattern':  raw_pat,
-                        'root':     raw_root
-                    }
-    return words_index
-
-def load_quran_verses(quran_path='data/quraan.txt'):
-    verses = []
-    with open(quran_path, 'r', encoding='utf-8') as f:
-        for i, line in enumerate(f, start=1):
-            text = normalize_arabic(line.strip())
-            if text:
-                verses.append({'verseNumber': i, 'text': text})
+def load_quran(q_path='data/quraan.txt'):
+    verses=[]
+    with open(q_path,encoding='utf-8') as f:
+        for i,line in enumerate(f,1):
+            t=normalize_arabic(line.strip())
+            if t: verses.append({'verseNumber':i,'text':t})
     return verses
 
-# Startup: build indexes
+# startup
 words_index   = load_dataset()
-verses        = load_quran_verses()
+verses        = load_quran()
 root_set      = {e['root'] for e in words_index.values()}
-root_examples = defaultdict(list)
 root_counts   = Counter()
+root_examples = defaultdict(list)
 
 for v in verses:
-    tokens = set(re.findall(r'[\u0600-\u06FF]+', v['text']))
-    hits   = tokens & root_set
+    toks = set(re.findall(r'[\u0600-\u06FF]+', v['text']))
+    hits = toks & root_set
     for r in hits:
         root_counts[r] += 1
-        if len(root_examples[r]) < 3:
+        if len(root_examples[r])<3:
             root_examples[r].append(v)
-
-@app.route('/', methods=['GET'])
-def home():
-    return jsonify(message="Arabic Miracle API is running"), 200
-
-@app.route('/ping', methods=['GET'])
-def ping():
-    return jsonify(status="ok", words_loaded=len(words_index)), 200
 
 @app.route('/analyze', methods=['POST'])
 def analyze():
@@ -104,37 +75,30 @@ def analyze():
     if not w:
         return jsonify(error="Invalid JSON payload"), 400
 
-    # exact lookup
     entry = words_index.get(w)
 
-    # fallback: strip initial hamza/alif variants
-    if not entry:
-        for hamza in ('ا','أ','إ','آ'):
-            if w.startswith(hamza):
-                stripped = w[len(hamza):]
-                cand = words_index.get(stripped)
-                if cand:
-                    entry = {
-                        'segments': [{'text': hamza, 'type':'prefix'}] + cand['segments'],
-                        'pattern':  cand['pattern'],
-                        'root':     cand['root']
-                    }
-                    break
+    # ── FALLBACK: bare-root lookup ──
+    if not entry and w in root_set:
+        entry = {
+            'segments':    [{'text': w, 'type':'root'}],
+            'pattern':     'فعل',
+            'root':        w
+        }
 
     if not entry:
         return jsonify(error="Word not found"), 404
 
-    root_val = entry['root']
-    count    = root_counts.get(root_val, 0)
-    examples = root_examples.get(root_val, [])
+    r    = entry['root']
+    cnt  = root_counts.get(r, 0)
+    exs  = root_examples.get(r, [])
 
     return jsonify({
         'segments':         entry['segments'],
         'pattern':          entry['pattern'],
-        'root_occurrences': count,
-        'example_verses':   examples
+        'root_occurrences': cnt,
+        'example_verses':   exs
     }), 200
 
 if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 10000))
+    port = int(os.environ.get('PORT',10000))
     app.run(host='0.0.0.0', port=port)
