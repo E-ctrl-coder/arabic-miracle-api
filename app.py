@@ -2,6 +2,7 @@ import os
 import zipfile
 import xml.etree.ElementTree as ET
 import re
+from collections import Counter
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 
@@ -10,68 +11,67 @@ CORS(app)
 
 def load_dataset(zip_path='data/Nemlar_dataset.zip'):
     words_index = {}
-    print(f"🔎 Loading XML dataset from {zip_path} (exists? {os.path.exists(zip_path)})")
-    with zipfile.ZipFile(zip_path, 'r') as zf:
-        for name in zf.namelist():
-            if not name.lower().endswith('.xml'):
-                continue
-            xml_bytes = zf.read(name)
-            try:
-                root = ET.fromstring(xml_bytes)
-            except ET.ParseError:
-                print(f"❌ Skipping malformed XML file: {name}")
-                continue
-
-            for al in root.findall('.//ArabicLexical'):
-                w = al.attrib.get('word','').strip()
-                if not w:
+    app.logger.info(f"Loading Nemlar XML from {zip_path}")
+    try:
+        with zipfile.ZipFile(zip_path, 'r') as zf:
+            for name in zf.namelist():
+                if not name.lower().endswith('.xml'):
+                    continue
+                try:
+                    tree = ET.fromstring(zf.read(name))
+                except ET.ParseError:
+                    app.logger.warning(f"Malformed XML, skipping: {name}")
                     continue
 
-                # initialize entry
-                if w not in words_index:
-                    words_index[w] = {
-                        'prefix':     al.attrib.get('prefix','').strip(),
-                        'root':       al.attrib.get('root','').strip(),
-                        'suffix':     al.attrib.get('suffix','').strip(),
-                        'pattern':    al.attrib.get('pattern','').strip(),
-                        'word_occurrences': 0,
-                        'quran_occurrences': 0
-                    }
-
-                # count this exact word instance
-                words_index[w]['word_occurrences'] += 1
-
-    print(f"✅ Parsed {len(words_index)} unique words")
+                for al in tree.findall('.//ArabicLexical'):
+                    w = al.attrib.get('word','').strip()
+                    if not w:
+                        continue
+                    if w not in words_index:
+                        words_index[w] = {
+                            'prefix':    al.attrib.get('prefix','').strip(),
+                            'root':      al.attrib.get('root','').strip(),
+                            'suffix':    al.attrib.get('suffix','').strip(),
+                            'pattern':   al.attrib.get('pattern','').strip(),
+                            'word_occurrences': 0,
+                            'quran_occurrences': 0
+                        }
+                    words_index[w]['word_occurrences'] += 1
+    except Exception as e:
+        app.logger.error(f"Failed loading dataset: {e}")
+    app.logger.info(f"Dataset loaded: {len(words_index)} unique words")
     return words_index
 
-def load_quran_text(quran_path='data/quraan.txt'):
-    print(f"🔎 Loading Quran text from {quran_path} (exists? {os.path.exists(quran_path)})")
-    with open(quran_path, 'r', encoding='utf-8') as f:
-        text = f.read()
-    return text
+def load_and_tokenize_quran(quran_path='data/quraan.txt'):
+    app.logger.info(f"Loading Quran text from {quran_path}")
+    try:
+        text = open(quran_path, 'r', encoding='utf-8').read()
+    except Exception as e:
+        app.logger.error(f"Failed to read Quran text: {e}")
+        return []
 
-# 1) Load up front
+    # Split on anything that isn't an Arabic letter
+    tokens = re.findall(r'[\u0600-\u06FF]+', text)
+    app.logger.info(f"Quran tokenized into {len(tokens)} words")
+    return tokens
+
+# Startup: load data
 words_index = load_dataset()
-quran_text = load_quran_text()
-
-# 2) Precompute root-occurrence counts (whole-word matches)
-print("🔢 Counting root occurrences in Quran text…")
-root_counts = {}
+quran_tokens = load_and_tokenize_quran()
+# Precompute root counts
+root_counter = Counter()
 for entry in words_index.values():
-    root_str = entry['root']
-    if not root_str or root_str in root_counts:
-        continue
+    root = entry['root']
+    if root:
+        root_counter[root] += 0  # ensure key exists
 
-    # Use Unicode word-boundary regex to match whole root
-    pattern = re.compile(rf'\b{re.escape(root_str)}\b', flags=re.UNICODE)
-    count = len(pattern.findall(quran_text))
-    root_counts[root_str] = count
+for token in quran_tokens:
+    if token in root_counter:
+        root_counter[token] += 1
 
-# 3) Assign each entry its Quran count
+# Assign quran_occurrences back into words_index
 for entry in words_index.values():
-    entry['quran_occurrences'] = root_counts.get(entry['root'], 0)
-
-print("✅ Quran root counts computed.")
+    entry['quran_occurrences'] = root_counter.get(entry['root'], 0)
 
 @app.route('/', methods=['GET'])
 def home():
@@ -83,11 +83,17 @@ def ping():
 
 @app.route('/analyze', methods=['POST'])
 def analyze():
-    data = request.get_json(silent=True)
-    if not data or 'word' not in data:
+    try:
+        payload = request.get_json(force=True)
+        w = payload.get('word','').strip()
+    except Exception:
         return jsonify(error="Invalid JSON payload"), 400
 
-    w = data['word'].strip()
+    app.logger.info(f"Analyze request for word: {w}")
+
+    if not w:
+        return jsonify(error="No word provided"), 400
+
     entry = words_index.get(w)
     if not entry:
         return jsonify(error="Word not found"), 404
@@ -100,6 +106,20 @@ def analyze():
         'word_occurrences':  entry['word_occurrences'],
         'quran_occurrences': entry['quran_occurrences']
     }), 200
+
+# Global error handlers to ensure JSON output
+@app.errorhandler(404)
+def not_found(e):
+    return jsonify(error="Not found"), 404
+
+@app.errorhandler(405)
+def method_not_allowed(e):
+    return jsonify(error="Method not allowed"), 405
+
+@app.errorhandler(Exception)
+def internal_error(e):
+    app.logger.exception(e)
+    return jsonify(error="Internal server error"), 500
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 10000))
