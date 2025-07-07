@@ -1,5 +1,7 @@
-flask>=2.0
-flask-cors>=3.0
+[packages]
+Flask = "==2.3.2"
+Flask-Cors = "==3.0.10"
+aratools-py = {git = "https://github.com/motazsaad/aratools-py.git", ref = "main"}
 
 
 
