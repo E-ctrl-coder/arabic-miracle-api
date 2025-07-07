@@ -66,7 +66,18 @@ for v in verses:
         root_counts[r] += 1
         if len(root_examples[r])<3:
             root_examples[r].append(v)
-
+@app.route('/debug/<raw_word>', methods=['GET'])
+def debug_word(raw_word):
+    # apply the same normalization used in analyze()
+    w = normalize_arabic(raw_word)
+    # capture every Unicode code point in the raw input
+    codes = [ord(ch) for ch in raw_word]
+    return jsonify({
+        "original":   raw_word,
+        "codes":      codes,
+        "normalized": w,
+        "in_index":   w in words_index
+    }), 200
 @app.route('/analyze', methods=['POST'])
 def analyze():
     data = request.get_json(silent=True) or {}
