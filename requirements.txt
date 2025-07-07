@@ -1,7 +1,6 @@
 Flask==2.3.2
 Flask-Cors==3.0.10
-git+https://github.com/motazsaad/aratools-py@main#egg=aratools-py
-
+git+https://github.com/motazsaad/aratools-py.git@main#egg=aratools-py
 
 
 
