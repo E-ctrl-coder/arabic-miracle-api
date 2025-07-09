@@ -1,33 +1,14 @@
 # aratools_alkhalil/helper.py
 
-from camel_tools.morphology.analyzer import Analyzer
+import requests
 
-# instantiate CAMeL Tools analyzer once
-_analyzer = Analyzer.builtin_analyzer()
+# URL of your running Alkhalil REST API
+ALKHALIL_URL = "http://localhost:8080/analyze"
 
-def analyze_with_camel(word: str) -> list[dict]:
+def analyze_with_alkhalil(word: str) -> list[dict]:
     """
-    Returns a list of dicts in Aratools-style:
-    [
-      {
-        'root':…,
-        'pattern':…,
-        'prefixes':…,
-        'suffixes':…,
-        'stem':…,
-        'pos':…
-      },
-      …
-    ]
+    Calls the external Alkhalil REST API and returns its JSON analyses.
     """
-    results = []
-    for a in _analyzer.analyze(word):
-        results.append({
-            'root':     a.get('root', '') or '',
-            'pattern':  a.get('pattern', '') or '',
-            'prefixes': a.get('prefixes', []) or [],
-            'suffixes': a.get('suffixes', []) or [],
-            'stem':     a.get('stem', '') or '',
-            'pos':      a.get('pos', '') or ''
-        })
-    return results
+    resp = requests.get(ALKHALIL_URL, params={'word': word})
+    resp.raise_for_status()
+    return resp.json()
