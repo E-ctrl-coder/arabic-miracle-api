@@ -9,18 +9,18 @@ from flask_cors import CORS
 app = Flask(__name__)
 CORS(app)
 
-# Toggle our new hybrid Alkhalil analyzer on/off
+# Toggle our hybrid analyzer on/off
 app.config['USE_HYBRID_ALKHALIL'] = True
 
-# Import the fresh helper you created
-from aratools_alkhalil.helper import analyze_word_with_alkhalil
+# Import the CAMeL Tools helper instead of Alkhalil
+from aratools_alkhalil.helper import analyze_with_camel
 
 # remove diacritics
 DIACRITICS_PATTERN = re.compile(
     r'[\u0610-\u061A\u064B-\u065F\u06D6-\u06DC\u06DF-\u06E8\u06EA-\u06ED]'
 )
 
-# strip invisible chars (BOM, zero-width, non-breaking space)
+# strip invisible chars (BOM, zero‐width, non‐breaking space)
 HIDDEN_CHARS = re.compile(r'[\uFEFF\u200B\u00A0]')
 
 # normalize letter variants
@@ -200,12 +200,12 @@ def analyze():
     }
     results.append({'source': 'dataset', **base})
 
-    # 2) Hybrid Alkhalil (Aratools-style)
+    # 2) Hybrid CAMeL Tools fallback
     if app.config['USE_HYBRID_ALKHALIL']:
-        alk = analyze_word_with_alkhalil(w)
-        for a in alk:
-            a['source'] = 'hybrid_alkhalil'
-        results.extend(alk)
+        camel_analyses = analyze_with_camel(w)
+        for c in camel_analyses:
+            c['source'] = 'camel_tools'
+        results.extend(camel_analyses)
 
     return jsonify(results), 200
 
