@@ -1,24 +1,33 @@
 # aratools_alkhalil/helper.py
 
-from alkhalil_pipeline.pipelines import MorphologyPipeline
+from camel_tools.morphology.analyzer import Analyzer
 
-# initialize Alkhalil pipeline once
-_pipeline = MorphologyPipeline()
+# instantiate CAMeL Tools analyzer once
+_analyzer = Analyzer.builtin_analyzer()
 
-def analyze_word_with_alkhalil(word):
+def analyze_with_camel(word: str) -> list[dict]:
     """
     Returns a list of dicts in Aratools-style:
-    [{'root':…, 'pattern':…, 'prefixes':…, 'suffixes':…, 'stem':…, 'pos':…}, …]
+    [
+      {
+        'root':…,
+        'pattern':…,
+        'prefixes':…,
+        'suffixes':…,
+        'stem':…,
+        'pos':…
+      },
+      …
+    ]
     """
-    analyses = _pipeline.process(word)
     results = []
-    for a in analyses:
+    for a in _analyzer.analyze(word):
         results.append({
-            'root': '-'.join(a['root']),
-            'pattern': a['pattern'],
-            'prefixes': a.get('prefixes', []),
-            'suffixes': a.get('suffixes', []),
-            'stem': a.get('stem'),
-            'pos': a.get('pos')
+            'root':     a.get('root', '') or '',
+            'pattern':  a.get('pattern', '') or '',
+            'prefixes': a.get('prefixes', []) or [],
+            'suffixes': a.get('suffixes', []) or [],
+            'stem':     a.get('stem', '') or '',
+            'pos':      a.get('pos', '') or ''
         })
     return results
