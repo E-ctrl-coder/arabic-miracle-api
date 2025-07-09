@@ -3,11 +3,17 @@ import zipfile
 import xml.etree.ElementTree as ET
 import re
 from collections import defaultdict, Counter
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, current_app
 from flask_cors import CORS
 
 app = Flask(__name__)
 CORS(app)
+
+# Toggle our new hybrid Alkhalil analyzer on/off
+app.config['USE_HYBRID_ALKHALIL'] = True
+
+# Import the fresh helper you created
+from aratools_alkhalil.helper import analyze_word_with_alkhalil
 
 # remove diacritics
 DIACRITICS_PATTERN = re.compile(
@@ -77,11 +83,11 @@ def load_dataset(zip_path='data/Nemlar_dataset.zip'):
             except ET.ParseError:
                 continue
             for al in root_elem.findall('.//ArabicLexical'):
-                raw_w   = al.attrib.get('word','').strip()
-                raw_pref= al.attrib.get('prefix','').strip()
-                raw_root= al.attrib.get('root','').strip()
-                raw_suff= al.attrib.get('suffix','').strip()
-                raw_pat = al.attrib.get('pattern','').strip()
+                raw_w    = al.attrib.get('word','').strip()
+                raw_pref = al.attrib.get('prefix','').strip()
+                raw_root = al.attrib.get('root','').strip()
+                raw_suff = al.attrib.get('suffix','').strip()
+                raw_pat  = al.attrib.get('pattern','').strip()
 
                 w    = normalize_arabic(raw_w)
                 pref = normalize_arabic(raw_pref)
@@ -136,7 +142,7 @@ def debug_word(raw_word):
         'in_index':   w in words_index
     }), 200
 
-# ─── Analyze Endpoint ───
+# ─── Analyze Endpoint (amended) ───
 @app.route('/analyze', methods=['POST'])
 def analyze():
     data = request.get_json(silent=True) or {}
@@ -145,15 +151,14 @@ def analyze():
     if not w:
         return jsonify(error="Invalid JSON payload"), 400
 
-    # 1) exact lookup
-    entry = words_index.get(w)
+    results = []
 
-    # 2) hamza/alif‐strip fallback
+    # 1) dataset lookup + fallbacks
+    entry = words_index.get(w)
     if not entry:
         for hamza in ('أ','إ','آ'):
             if w.startswith(hamza):
-                core = w[1:]
-                cand = words_index.get(core)
+                cand = words_index.get(w[1:])
                 if cand:
                     entry = {
                         'segments': [{'text':hamza,'type':'prefix'}] + cand['segments'],
@@ -162,7 +167,6 @@ def analyze():
                     }
                     break
 
-    # 3) generic affix‐stripping fallback
     if not entry:
         for pre, core, suf in try_strip_affixes(w):
             cand = words_index.get(core)
@@ -171,14 +175,9 @@ def analyze():
                 if pre: segs.append({'text':pre,'type':'prefix'})
                 segs.extend(cand['segments'])
                 if suf: segs.append({'text':suf,'type':'suffix'})
-                entry = {
-                    'segments': segs,
-                    'pattern':  cand['pattern'],
-                    'root':     cand['root']
-                }
+                entry = {'segments': segs, 'pattern': cand['pattern'], 'root': cand['root']}
                 break
 
-    # 4) bare‐root fallback
     if not entry and w in root_set:
         entry = {
             'segments': [{'text':w,'type':'root'}],
@@ -189,16 +188,26 @@ def analyze():
     if not entry:
         return jsonify(error="Word not found"), 404
 
-    r    = entry['root']
-    cnt  = root_counts.get(r, 0)
-    exs  = root_examples.get(r, [])
-
-    return jsonify({
+    # assemble and tag base result
+    r   = entry['root']
+    cnt = root_counts.get(r, 0)
+    exs = root_examples.get(r, [])
+    base = {
         'segments':         entry['segments'],
         'pattern':          entry['pattern'],
         'root_occurrences': cnt,
         'example_verses':   exs
-    }), 200
+    }
+    results.append({'source': 'dataset', **base})
+
+    # 2) Hybrid Alkhalil (Aratools-style)
+    if app.config['USE_HYBRID_ALKHALIL']:
+        alk = analyze_word_with_alkhalil(w)
+        for a in alk:
+            a['source'] = 'hybrid_alkhalil'
+        results.extend(alk)
+
+    return jsonify(results), 200
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 10000))
