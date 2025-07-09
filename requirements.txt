@@ -1,6 +1,6 @@
 Flask==2.3.2
 Flask-Cors==3.0.10
-git+https://github.com/Aratools/alkhalil-pipeline.git@main#egg=alkhalil_pipeline
+camel-tools==1.1.3
 
 
 
