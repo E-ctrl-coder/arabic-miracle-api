@@ -20,7 +20,7 @@ DIACRITICS_PATTERN = re.compile(
     r'[\u0610-\u061A\u064B-\u065F\u06D6-\u06DC\u06DF-\u06E8\u06EA-\u06ED]'
 )
 
-# strip invisible chars (BOM, zero‐width, non‐breaking space)
+# strip invisible chars (BOM, zero-width, non-breaking space)
 HIDDEN_CHARS = re.compile(r'[\uFEFF\u200B\u00A0]')
 
 # normalize letter variants
@@ -71,13 +71,13 @@ def try_strip_affixes(word: str):
 
 def load_dataset(zip_path='data/Nemlar_dataset.zip'):
     idx = {}
-    # <-- FIXED: closed parenthesis and added "as zf:"
     with zipfile.ZipFile(zip_path) as zf:
         for fn in zf.namelist():
             if not fn.lower().endswith('.xml'):
                 continue
             try:
-                root = ET.fromstring(zf.read(fn))
+                xml_data = zf.read(fn)
+                root = ET.fromstring(xml_data)
             except:
                 continue
             for al in root.findall('.//ArabicLexical'):
@@ -116,11 +116,11 @@ def load_quran(q_path='data/quraan.txt'):
     return vs
 
 # Build indexes
-words_index    = load_dataset()
-verses         = load_quran()
-root_set       = {e['root'] for e in words_index.values()}
-root_counts    = Counter()
-root_examples  = defaultdict(list)
+words_index   = load_dataset()
+verses        = load_quran()
+root_set      = {e['root'] for e in words_index.values()}
+root_counts   = Counter()
+root_examples = defaultdict(list)
 
 for v in verses:
     tokens = set(re.findall(r'[\u0600-\u06FF]+', v['text']))
@@ -139,52 +139,60 @@ def debug_word(raw_word):
         'codes': [ord(ch) for ch in raw_word]
     }), 200
 
-@app.route('/analyze', methods=['POST'])
+@app.route('/analyze', methods=['GET', 'POST'])
 def analyze():
-    data = request.get_json(silent=True) or {}
-    raw  = data.get('word','').strip()
-    w    = normalize_arabic(raw)
+    # support browser GET for quick testing
+    if request.method == 'GET':
+        raw = request.args.get('word', '').strip()
+    else:
+        data = request.get_json(silent=True) or {}
+        raw  = data.get('word','').strip()
+
+    w = normalize_arabic(raw)
     if not w:
-        return jsonify(error="Invalid JSON payload"), 400
+        return jsonify(error="Invalid payload"), 400
 
     results = []
 
     # 1) dataset lookup + affix fallbacks
     entry = words_index.get(w)
     if not entry:
+        # hamza-drop fallback
         for hamza in ('أ','إ','آ'):
-            if w.startswith(hamza) and words_index.get(w[1:]):
-                cand = words_index[w[1:]]
+            if w.startswith(hamza) and (cand := words_index.get(w[1:])):
                 entry = {
                     'segments': [{'text':hamza,'type':'prefix'}] + cand['segments'],
-                    'pattern': cand['pattern'],
-                    'root': cand['root']
+                    'pattern': cand['pattern'], 'root': cand['root']
                 }
                 break
+
     if not entry:
+        # prefix+suffix stripping
         for pre, core, suf in try_strip_affixes(w):
-            cand = words_index.get(core)
-            if cand:
+            if (cand := words_index.get(core)):
                 segs = ([{'text':pre,'type':'prefix'}] if pre else []) \
                      + cand['segments'] \
                      + ([{'text':suf,'type':'suffix'}] if suf else [])
-                entry = {'segments': segs, 'pattern': cand['pattern'], 'root': cand['root']}
+                entry = {'segments':segs, 'pattern':cand['pattern'], 'root':cand['root']}
                 break
+
     if not entry and w in root_set:
-        entry = {'segments': [{'text':w,'type':'root'}], 'pattern': 'فعل', 'root': w}
+        entry = {'segments':[{'text':w,'type':'root'}], 'pattern':'فعل', 'root':w}
+
     if not entry:
         return jsonify(error="Word not found"), 404
 
+    # dataset result
     r   = entry['root']
     cnt = root_counts.get(r, 0)
     exs = root_examples.get(r, [])
 
     results.append({
-        'source': 'dataset',
-        'segments': entry['segments'],
-        'pattern': entry['pattern'],
+        'source':           'dataset',
+        'segments':         entry['segments'],
+        'pattern':          entry['pattern'],
         'root_occurrences': cnt,
-        'example_verses': exs
+        'example_verses':   exs
     })
 
     # 2) hybrid Alkhalil REST fallback
@@ -195,6 +203,12 @@ def analyze():
         results.extend(parses)
 
     return jsonify(results), 200
+
+# JSON error handler for debugging
+@app.errorhandler(Exception)
+def handle_exception(e):
+    app.logger.exception(e)
+    return jsonify(error=str(e)), 500
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 10000))
