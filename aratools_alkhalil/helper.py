@@ -1,16 +1,10 @@
 # aratools_alkhalil/helper.py
 
-import os
 import requests
 
-# Either set this ENV var in Render (or Heroku), or hard-code your URL here:
-#
-#   e.g. https://my-alkhalil-rest-api.onrender.com/analyze
-#
-ALKHALIL_URL = os.environ.get(
-    "ALKHALIL_URL",
-    "https://<your-alkhalil-rest-api>.onrender.com/analyze"
-)
+# Hard-code your live Alkhalil endpoint here:
+# e.g. "https://arabic-miracle-api.onrender.com/analyze"
+ALKHALIL_URL = "https://arabic-miracle-api.onrender.com/analyze"
 
 def analyze_with_alkhalil(word: str) -> list[dict]:
     """
