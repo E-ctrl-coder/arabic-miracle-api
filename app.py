@@ -2,7 +2,6 @@ import os
 import zipfile
 import xml.etree.ElementTree as ET
 import re
-import time
 import logging
 from collections import defaultdict, Counter
 from flask import Flask, jsonify, request, current_app
@@ -26,11 +25,12 @@ DIACRITICS_PATTERN = re.compile(
 )
 HIDDEN_CHARS = re.compile(r'[\uFEFF\u200B\u00A0]')
 NORMALIZE_MAP = str.maketrans({
-    'آ':'ا','أ':'ا','إ':'ا',
-    'ة':'ه','ى':'ي','ـ':''
+    'آ': 'ا', 'أ': 'ا', 'إ': 'ا',
+    'ة': 'ه', 'ى': 'ي', 'ـ': ''
 })
-PREFIXES = ['ال','و','ف','ب','ك','ل','س','است']
-SUFFIXES = ['ه','ها','هم','هن','كما','نا','ني','ي','وا','ان','ين','ون','ات','ة','ك']
+PREFIXES = ['ال', 'و', 'ف', 'ب', 'ك', 'ل', 'س', 'است']
+SUFFIXES = ['ه', 'ها', 'هم', 'هن', 'كما', 'نا', 'ني', 'ي',
+            'وا', 'ان', 'ين', 'ون', 'ات', 'ة', 'ك']
 
 def normalize_arabic(text: str) -> str:
     if not text:
@@ -66,27 +66,30 @@ def load_dataset(zip_path='data/Nemlar_dataset.zip'):
             except Exception:
                 continue
             for al in root.findall('.//ArabicLexical'):
-                raw_w, raw_pref, raw_root, raw_suff, raw_pat = (
-                    al.attrib.get('word','').strip(),
-                    al.attrib.get('prefix','').strip(),
-                    al.attrib.get('root','').strip(),
-                    al.attrib.get('suffix','').strip(),
-                    al.attrib.get('pattern','').strip()
-                )
+                raw_w    = al.attrib.get('word','').strip()
+                raw_pref = al.attrib.get('prefix','').strip()
+                raw_root = al.attrib.get('root','').strip()
+                raw_suff = al.attrib.get('suffix','').strip()
+                raw_pat  = al.attrib.get('pattern','').strip()
+
                 w    = normalize_arabic(raw_w)
                 pref = normalize_arabic(raw_pref)
                 rt   = normalize_arabic(raw_root)
                 suff = normalize_arabic(raw_suff)
                 pat  = normalize_arabic(raw_pat)
+
                 if not w or not rt:
                     continue
 
                 if w not in idx:
                     segs = []
-                    if pref: segs.append({'text':pref,'type':'prefix'})
-                    if rt:   segs.append({'text':rt,'type':'root'})
-                    if suff: segs.append({'text':suff,'type':'suffix'})
-                    idx[w] = {'segments':segs,'pattern':pat,'root':rt}
+                    if pref:
+                        segs.append({'text': pref, 'type': 'prefix'})
+                    if rt:
+                        segs.append({'text': rt,   'type': 'root'})
+                    if suff:
+                        segs.append({'text': suff, 'type': 'suffix'})
+                    idx[w] = {'segments': segs, 'pattern': pat, 'root': rt}
     return idx
 
 def load_quran(q_path='data/quraan.txt'):
@@ -103,6 +106,7 @@ verses        = load_quran()
 root_set      = {e['root'] for e in words_index.values()}
 root_counts   = Counter()
 root_examples = defaultdict(list)
+
 for v in verses:
     tokens = set(re.findall(r'[\u0600-\u06FF]+', v['text']))
     for r in tokens & root_set:
@@ -130,11 +134,12 @@ def analyze():
         f"json={request.get_json(silent=True)}"
     )
 
+    # support GET for quick testing
     if request.method == 'GET':
-        raw = request.args.get('word','').strip()
+        raw = request.args.get('word', '').strip()
     else:
         data = request.get_json(silent=True) or {}
-        raw  = data.get('word','').strip()
+        raw  = data.get('word', '').strip()
 
     w = normalize_arabic(raw)
     if not w:
@@ -144,25 +149,74 @@ def analyze():
     results = []
     try:
         entry = words_index.get(w)
+
+        # hamza-drop fallback
         if not entry:
-            # ← Properly terminated string literal here
             for hamza in ('أ', 'إ', 'آ'):
                 if w.startswith(hamza) and (cand := words_index.get(w[1:])):
                     entry = {
-                        'segments': [{'text':hamza,'type':'prefix'}] + cand['segments'],
-                        'pattern': cand['pattern'],
-                        'root':    cand['root']
+                        'segments': [{'text': hamza, 'type': 'prefix'}] + cand['segments'],
+                        'pattern':  cand['pattern'],
+                        'root':     cand['root']
                     }
                     break
 
+        # affix stripping fallback
         if not entry:
             for pre, core, suf in try_strip_affixes(w):
                 if (cand := words_index.get(core)):
-                    segs = ([{'text':pre,'type':'prefix'}] if pre else []) \
-                         + cand['segments'] \
-                         + ([{'text':suf,'type':'suffix'}] if suf else [])
-                    entry = {'segments':segs, 'pattern':cand['pattern'], 'root':cand['root']}
+                    segs = (
+                        ([{'text': pre, 'type': 'prefix'}] if pre else [])
+                        + cand['segments']
+                        + ([{'text': suf, 'type': 'suffix'}] if suf else [])
+                    )
+                    entry = {'segments': segs, 'pattern': cand['pattern'], 'root': cand['root']}
                     break
 
+        # root-only fallback
         if not entry and w in root_set:
-            entry = {'segments':[{'text':w,'type':'root'}], 'pattern':'فعل',
+            entry = {
+                'segments': [{'text': w, 'type': 'root'}],
+                'pattern':  'فعل',
+                'root':     w
+            }
+
+        if not entry:
+            app.logger.info("↪ Word not found in dataset or root set")
+            return jsonify(error="Word not found"), 404
+
+        # dataset result
+        r   = entry['root']
+        cnt = root_counts.get(r, 0)
+        exs = root_examples.get(r, [])
+        results.append({
+            'source':           'dataset',
+            'segments':         entry['segments'],
+            'pattern':          entry['pattern'],
+            'root_occurrences': cnt,
+            'example_verses':   exs
+        })
+
+        # hybrid Alkhalil REST fallback
+        if current_app.config['USE_HYBRID_ALKHALIL']:
+            parses = analyze_with_alkhalil(w)
+            for p in parses:
+                p['source'] = 'hybrid_alkhalil'
+            results.extend(parses)
+
+    except Exception as e:
+        app.logger.exception("‼ Exception inside /analyze")
+        return jsonify(error=str(e)), 500
+
+    app.logger.info(f"↪ /analyze returning {len(results)} items")
+    return jsonify(results), 200
+
+# ——— Global Error Handler —————————————————————————————————————
+@app.errorhandler(Exception)
+def handle_exception(e):
+    app.logger.exception("💥 Unhandled exception")
+    return jsonify(error=str(e)), 500
+
+if __name__ == '__main__':
+    port = int(os.environ.get('PORT', 10000))
+    app.run(host='0.0.0.0', port=port)
