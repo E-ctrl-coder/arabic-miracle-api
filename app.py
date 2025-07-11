@@ -124,14 +124,12 @@ def debug_word(raw_word):
 # ——— ANALYZE with Logging ——————————————————————————————————————
 @app.route('/analyze', methods=['GET', 'POST'])
 def analyze():
-    # Log entry
     app.logger.info(
         f"→ /analyze invoked method={request.method} "
         f"args={request.args.to_dict()} "
         f"json={request.get_json(silent=True)}"
     )
 
-    # Support GET or POST
     if request.method == 'GET':
         raw = request.args.get('word','').strip()
     else:
@@ -145,7 +143,26 @@ def analyze():
 
     results = []
     try:
-        # 1) dataset lookup + affix fallbacks
         entry = words_index.get(w)
         if not entry:
-            for hamza in ('
+            # ← Properly terminated string literal here
+            for hamza in ('أ', 'إ', 'آ'):
+                if w.startswith(hamza) and (cand := words_index.get(w[1:])):
+                    entry = {
+                        'segments': [{'text':hamza,'type':'prefix'}] + cand['segments'],
+                        'pattern': cand['pattern'],
+                        'root':    cand['root']
+                    }
+                    break
+
+        if not entry:
+            for pre, core, suf in try_strip_affixes(w):
+                if (cand := words_index.get(core)):
+                    segs = ([{'text':pre,'type':'prefix'}] if pre else []) \
+                         + cand['segments'] \
+                         + ([{'text':suf,'type':'suffix'}] if suf else [])
+                    entry = {'segments':segs, 'pattern':cand['pattern'], 'root':cand['root']}
+                    break
+
+        if not entry and w in root_set:
+            entry = {'segments':[{'text':w,'type':'root'}], 'pattern':'فعل',
