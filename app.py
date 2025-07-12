@@ -17,7 +17,29 @@ CORS(app)
 app.config['USE_HYBRID_ALKHALIL'] = True
 
 # Import the HTTP-based Alkhalil helper
+# that now reads ALKHALIL_URL from ENV
 from aratools_alkhalil.helper import analyze_with_alkhalil
+
+# ——— Startup Logging ————————————————————————————————————————
+@app.before_first_request
+def log_startup_config():
+    alk_url = os.getenv("ALKHALIL_URL", "<not set>")
+    logging.warning(
+        "MiracleContext starting with USE_HYBRID_ALKHALIL=%s, ALKHALIL_URL=%s",
+        app.config['USE_HYBRID_ALKHALIL'],
+        alk_url
+    )
+
+# ——— Root Health Check ——————————————————————————————————————
+@app.route("/", methods=['GET'])
+def index():
+    return jsonify({
+        "status": "ok",
+        "routes": [
+            "/analyze?word=…",
+            "/debug/<raw_word>"
+        ]
+    }), 200
 
 # ——— Arabic Normalization Helpers ——————————————————————————————
 DIACRITICS_PATTERN = re.compile(
