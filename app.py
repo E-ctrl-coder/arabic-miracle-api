@@ -226,4 +226,13 @@ def debug_word(raw_word):
 
 # ——— Global Error Handler —————————————————————————————————————
 @app.errorhandler(Exception)
-def handle_exception
+# ——— Global Error Handler —————————————————————————————————————
+@app.errorhandler(Exception)
+def handle_exception(e):
+    app.logger.exception("💥 Unhandled exception")
+    return jsonify(error=str(e)), 500
+
+# ——— Entry Point ———————————————————————————————————————————————
+if __name__ == '__main__':
+    port = int(os.environ.get('PORT', 10000))
+    app.run(host='0.0.0.0', port=port)
