@@ -1,9 +1,15 @@
-# aratools_alkhalil/helper.py
-
+import os
+import logging
 import requests
 
-# Hard-code your live Alkhalil endpoint here (no < > brackets):
-ALKHALIL_URL = "https://arabic-miracle-api.onrender.com/analyze"
+# Load stub URL from ENV, fallback to the Render-onrender stub
+ALKHALIL_URL = os.getenv(
+    "ALKHALIL_URL",
+    "https://alkhalil-rest-api.onrender.com/analyze"
+)
+
+# Log on import so you can verify in Render logs
+logging.warning("aratools_alkhalil helper loaded with ALKHALIL_URL=%s", ALKHALIL_URL)
 
 # (connect timeout, read timeout)
 TIMEOUT = (5, 30)
@@ -14,12 +20,16 @@ def analyze_with_alkhalil(word: str) -> list[dict]:
     If the request times out reading, returns an empty list.
     """
     try:
-        resp = requests.get(ALKHALIL_URL, params={"word": word}, timeout=TIMEOUT)
+        resp = requests.get(
+            ALKHALIL_URL,
+            params={"word": word},
+            timeout=TIMEOUT
+        )
         resp.raise_for_status()
         return resp.json()
     except requests.Timeout:
-        # The remote service took too long to respond
+        logging.error("alkhalil REST call timed out for URL: %s", ALKHALIL_URL)
         return []
     except requests.RequestException as e:
-        # Propagate other HTTP errors
+        logging.error("alkhalil REST call error (%s): %s", ALKHALIL_URL, e)
         raise
