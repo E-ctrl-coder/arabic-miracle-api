@@ -17,28 +17,23 @@ CORS(app)
 app.config['USE_HYBRID_ALKHALIL'] = True
 
 # Import the HTTP-based Alkhalil helper
-# that now reads ALKHALIL_URL from ENV
 from aratools_alkhalil.helper import analyze_with_alkhalil
 
-# ——— Startup Logging ————————————————————————————————————————
-@app.before_first_request
-def log_startup_config():
-    alk_url = os.getenv("ALKHALIL_URL", "<not set>")
-    logging.warning(
-        "MiracleContext starting with USE_HYBRID_ALKHALIL=%s, ALKHALIL_URL=%s",
-        app.config['USE_HYBRID_ALKHALIL'],
-        alk_url
-    )
+# ——— Log Startup Configuration ——————————————————————————————————
+# This runs at import time (so you’ll see it in your Render logs immediately)
+ALK_URL = os.getenv("ALKHALIL_URL", "<not set>")
+logging.warning(
+    "MiracleContext starting with USE_HYBRID_ALKHALIL=%s, ALKHALIL_URL=%s",
+    app.config['USE_HYBRID_ALKHALIL'],
+    ALK_URL
+)
 
 # ——— Root Health Check ——————————————————————————————————————
 @app.route("/", methods=['GET'])
 def index():
     return jsonify({
         "status": "ok",
-        "routes": [
-            "/analyze?word=…",
-            "/debug/<raw_word>"
-        ]
+        "routes": ["/analyze?word=…", "/debug/<raw_word>"]
     }), 200
 
 # ——— Arabic Normalization Helpers ——————————————————————————————
@@ -156,7 +151,6 @@ def analyze():
         f"json={request.get_json(silent=True)}"
     )
 
-    # support GET for quick testing
     if request.method == 'GET':
         raw = request.args.get('word', '').strip()
     else:
@@ -188,9 +182,9 @@ def analyze():
             for pre, core, suf in try_strip_affixes(w):
                 if (cand := words_index.get(core)):
                     segs = (
-                        ([{'text': pre, 'type': 'prefix'}] if pre else [])
-                        + cand['segments']
-                        + ([{'text': suf, 'type': 'suffix'}] if suf else [])
+                        ([{'text': pre, 'type': 'prefix'}] if pre else []) +
+                        cand['segments'] +
+                        ([{'text': suf, 'type': 'suffix'}] if suf else [])
                     )
                     entry = {'segments': segs, 'pattern': cand['pattern'], 'root': cand['root']}
                     break
@@ -240,5 +234,3 @@ def handle_exception(e):
     return jsonify(error=str(e)), 500
 
 if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 10000))
-    app.run(host='0.0.0.0', port=port)
