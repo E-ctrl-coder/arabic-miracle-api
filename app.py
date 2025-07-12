@@ -13,14 +13,13 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 app = Flask(__name__)
 CORS(app)
 
-# Toggle our hybrid analyzer on/off
+# Toggle hybrid parsing
 app.config['USE_HYBRID_ALKHALIL'] = True
 
-# Import the HTTP-based Alkhalil helper
+# Alkhalil REST API helper
 from aratools_alkhalil.helper import analyze_with_alkhalil
 
-# ——— Log Startup Configuration ——————————————————————————————————
-# Runs at import time so it shows up immediately in Render logs
+# ——— Log Startup Configuration ————————————————————————————————
 ALK_URL = os.getenv("ALKHALIL_URL", "<not set>")
 logging.warning(
     "MiracleContext starting with USE_HYBRID_ALKHALIL=%s, ALKHALIL_URL=%s",
@@ -28,7 +27,7 @@ logging.warning(
     ALK_URL
 )
 
-# ——— Root Health Check ——————————————————————————————————————
+# ——— Root Route ————————————————————————————————————————————
 @app.route("/", methods=['GET'])
 def index():
     return jsonify({
@@ -36,10 +35,8 @@ def index():
         "routes": ["/analyze?word=…", "/debug/<raw_word>"]
     }), 200
 
-# ——— Arabic Normalization Helpers ——————————————————————————————
-DIACRITICS_PATTERN = re.compile(
-    r'[\u0610-\u061A\u064B-\u065F\u06D6-\u06DC\u06DF-\u06E8\u06EA-\u06ED]'
-)
+# ——— Arabic Normalization ——————————————————————————————————————
+DIACRITICS_PATTERN = re.compile(r'[\u0610-\u061A\u064B-\u065F\u06D6-\u06DC\u06DF-\u06E8\u06EA-\u06ED]')
 HIDDEN_CHARS = re.compile(r'[\uFEFF\u200B\u00A0]')
 NORMALIZE_MAP = str.maketrans({
     'آ': 'ا', 'أ': 'ا', 'إ': 'ا',
@@ -116,4 +113,117 @@ def load_quran(q_path='data/quraan.txt'):
             txt = normalize_arabic(line.strip())
             if txt:
                 vs.append({'verseNumber': i, 'text': txt})
-    return
+    return vs
+
+words_index   = load_dataset()
+verses        = load_quran()
+root_set      = {e['root'] for e in words_index.values()}
+root_counts   = Counter()
+root_examples = defaultdict(list)
+
+for v in verses:
+    tokens = set(re.findall(r'[\u0600-\u06FF]+', v['text']))
+    for r in tokens & root_set:
+        root_counts[r] += 1
+        if len(root_examples[r]) < 3:
+            root_examples[r].append(v)
+
+# ——— Analyze Endpoint ——————————————————————————————————————————
+@app.route('/analyze', methods=['GET', 'POST'])
+def analyze():
+    app.logger.info(
+        f"→ /analyze invoked method={request.method} "
+        f"args={request.args.to_dict()} "
+        f"json={request.get_json(silent=True)}"
+    )
+
+    if request.method == 'GET':
+        raw = request.args.get('word', '').strip()
+    else:
+        data = request.get_json(silent=True) or {}
+        raw  = data.get('word', '').strip()
+
+    w = normalize_arabic(raw)
+    if not w:
+        app.logger.info("↪ Invalid payload (empty after normalize)")
+        return jsonify(error="Invalid payload"), 400
+
+    results = []
+    try:
+        entry = words_index.get(w)
+
+        # Hamza fallback
+        if not entry:
+            for hamza in ('أ', 'إ', 'آ'):
+                if w.startswith(hamza) and (cand := words_index.get(w[1:])):
+                    entry = {
+                        'segments': [{'text': hamza, 'type': 'prefix'}] + cand['segments'],
+                        'pattern':  cand['pattern'],
+                        'root':     cand['root']
+                    }
+                    break
+
+        # Affix fallback
+        if not entry:
+            for pre, core, suf in try_strip_affixes(w):
+                if (cand := words_index.get(core)):
+                    segs = (
+                        ([{'text': pre, 'type': 'prefix'}] if pre else [])
+                        + cand['segments']
+                        + ([{'text': suf, 'type': 'suffix'}] if suf else [])
+                    )
+                    entry = {'segments': segs, 'pattern': cand['pattern'], 'root': cand['root']}
+                    break
+
+        # Root-only fallback
+        if not entry and w in root_set:
+            entry = {
+                'segments': [{'text': w, 'type': 'root'}],
+                'pattern':  'فعل',
+                'root':     w
+            }
+
+        if not entry:
+            app.logger.info("↪ Word not found in dataset or root set")
+            return jsonify(error="Word not found"), 404
+
+        # Dataset result
+        r   = entry['root']
+        cnt = root_counts.get(r, 0)
+        exs = root_examples.get(r, [])
+        results.append({
+            'source':           'dataset',
+            'segments':         entry['segments'],
+            'pattern':          entry['pattern'],
+            'root_occurrences': cnt,
+            'example_verses':   exs
+        })
+
+        # Hybrid Alkhalil fallback
+        if current_app.config['USE_HYBRID_ALKHALIL']:
+            parses = analyze_with_alkhalil(w)
+            for p in parses:
+                p['source'] = 'hybrid_alkhalil'
+            results.extend(parses)
+
+    except Exception as e:
+        app.logger.exception("‼ Exception inside /analyze")
+        return jsonify(error=str(e)), 500
+
+    app.logger.info(f"↪ /analyze returning {len(results)} items")
+    return jsonify(results), 200
+
+# ——— Debug Endpoint ——————————————————————————————————————————
+@app.route('/debug/<raw_word>', methods=['GET'])
+def debug_word(raw_word):
+    w = normalize_arabic(raw_word)
+    return jsonify({
+        'original': raw_word,
+        'normalized': w,
+        'in_index': w in words_index,
+        'codes': [ord(ch) for ch in raw_word]
+    }), 200
+
+# ——— Global Error Handler —————————————————————————————————————
+@app.errorhandler(Exception)
+def handle_exception
